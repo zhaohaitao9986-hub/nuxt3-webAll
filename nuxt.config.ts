@@ -8,4 +8,11 @@ export default defineNuxtConfig({
  ],
 
   modules: ['@nuxtjs/tailwindcss'],
+  components: [
+    {
+      path: '~/themes',
+      extensions: ['.vue'],
+    },
+    '~/components',
+  ],
 })
