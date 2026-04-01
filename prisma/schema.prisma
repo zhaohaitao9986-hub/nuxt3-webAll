@@ -1,0 +1,18 @@
+// This is your Prisma schema file
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 数据库：PostgreSQL（最推荐）
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 示例表：用户（你可以自己改）
+model User {
+  id    Int     @id @default(autoincrement())
+  name  String?
+  email String  @unique
+  age   Int?
+}
