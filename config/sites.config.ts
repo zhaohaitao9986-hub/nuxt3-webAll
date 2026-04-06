@@ -13,6 +13,24 @@ export interface SiteConfig {
 }
 
 const sites: Record<string, SiteConfig> = {
+  'de.test.com': {
+    domain: 'de.appswm.com',
+    themeDir: 'de.appswm.com',
+    apiBase: '/api',
+    title: 'German Site',
+    routes: [
+      { pattern: '/', view: 'home' },
+      { pattern: '/search', view: 'search' },
+      { pattern: /^\/app-([^/]+)$/, view: 'appDetail' },
+      { pattern: '/about', view: 'about' },
+      { pattern: /^\/(apps|games)$/, view: 'categoryFirst' },
+      { pattern: /^\/(apps|games)\/([^/]+)$/, view: 'categorySecond' },
+      { pattern: /^\/app-([^/]+)\/download$/, view: 'appDownload' },
+      {
+        pattern: /^\/(disclaimer|about-us|cookies-privacy-policy|terms-of-service)$/, view: 'protocol'
+      }
+    ]
+  },
   'de.appswm.com': {
     domain: 'de.appswm.com',
     themeDir: 'de.appswm.com',

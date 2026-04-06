@@ -16,3 +16,33 @@ model User {
   email String  @unique
   age   Int?
 }
+
+model AiTool {
+  id              Int      @id @default(autoincrement())
+  slug            String   @unique
+  name            String
+  logo            String?
+  what_is         String?
+  features        String[]
+  use_cases       String[]
+  pros            String[]
+  cons            String[]
+  pricing_type    String?
+  pricing_info    String?
+  pricing_plans   String?
+  short_desc      String?
+  full_desc       String?
+  category        String?
+  tags            String[]
+  website_url     String?
+  seo_title       String?
+  seo_description String?
+  seo_keywords    String[]
+  source          String?
+  source_id       String?
+  downloads       Int      @default(0)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@map("ai_tools")
+}
