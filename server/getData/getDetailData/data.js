@@ -1,3 +1,5 @@
+import { title } from "node:process"
+
 export const data = [
     {
         "website": "https://chatgpt.com?utm_source=toolify",
@@ -3230,3 +3232,76 @@ export const data = [
 //     ...
 
 // ]
+const testData = [
+    {
+        what_is_summary: '', 元素类名category- container下的类名xl: col - span - 4下的第五个div下的第一个div下的p标签的内容
+        feature: [], 元素类名category - container下的类名xl: col - span - 4下的第五个div下的第二个div下的所有li标签下的span标签的内容
+        who_is_use: '', 元素类名category - container下的类名xl: col - span - 4下的第五个div下的第三个div下的p标签的内容
+        how_do_work: '', 元素类名category - container下的类名xl: col - span - 4下的第五个div下的第四个div下的p标签的内容
+        advantages: '', 元素类名category - container下的类名xl: col - span - 4下的第五个div下的第五个div下的p标签的内容
+        faq: [
+        元素类名category - container下的类名xl: col - span - 4下的第五个div下的第六个div下的所有类名el - collapse - item的内容，
+        title对应的类名el - collapse - item下的el - collapse - item__header下的span标签的内容，desc对应的类名el - collapse - item下的el - collapse - item__content下的div标签的内容
+            {
+            title: '',
+            desc: '',
+        }...
+
+        ],
+    ai_tools: [
+        元素类名category - container下的类名xl: col - span - 4下的tools下的所有类名mb - 12
+            website对应的类名mb - 12下的a标签href属性的值
+            collected_count对应的类名mb - 12下的tool - item 下的tool - card下的类名card - text - content下的card - tool - info下的tool - info - collected 的内容值去掉Saved
+            tool_info_review对应的类名mb - 12下的tool - item 下的tool - card下的类名card - text - content下的card - tool - info下的el - rate__text的内容
+            image，website_logo对应的类名mb - 12下的tool - item 下的tool - card下的a标签下的img标签的src属性值,
+        name对应的类名mb - 12下的tool - item 下的tool - card下的类名card - text - content下的a标签下的h2标签的内容
+            description对应的类名mb - 12下的tool - item 下的tool - card下的类名card - text - content下的p标签的内容
+            handle为name值的小写，如果有空格用 - 代替
+            website_name为name值
+            website_logo为image的值
+            
+            pricing对应的类名mb - 12下的tool - item 下的category - collapse下的第一个el - collapse - item下的el - collapse - item__content下的所有rounded的innerhtml
+            what_is_summary 对应的类名mb - 12下的tool - item 下的category - collapse下的第二个el - collapse - item下的el - collapse - item__wrap下的text - lg的内容
+            feature对应的类名mb - 12下的tool - item 下的category - collapse下的第三个el - collapse - item下的el - collapse - item__content下的所有li的内容
+            pros对应的类名mb - 12下的tool - item 下的category - collapse下的第四个el - collapse - item下的el - collapse - item__content下的第一个ul下的所有li的内容
+            cons对应的类名mb - 12下的tool - item 下的category - collapse下的第四个el - collapse - item下的el - collapse - item__content下的第二个ul下的所有li的内容
+            {
+            website: '',
+            collected_count: '',
+            description: '',
+            handle: '',
+            image: '',
+            name: '',
+            what_is_summary: '',
+            website_name: '',
+            website_logo: '',
+            tool_info_review: '',
+            pricing: [],
+            feature: [],
+            pros: [],
+            cons: []
+        }
+    ]...（数组长度为小于等于20）
+    }...（数组长度为页数）
+]
+
+
+const b = { 
+    "name": "Video To Blog",
+    "handle": "video-to-blog",
+    "website": "https://www.toolify.ai/tool/video-to-blog",
+    "description": "AI tool to convert videos into SEO-optimized blog posts with images and links.",
+    "image": "",
+    "website_logo": "",
+    "website_name": "Video To Blog",
+    "what_is_summary": "Video To Blog is an AI-powered tool that instantly converts videos into high-quality, SEO-optimized blog posts. It automatically adds screenshots, AI-generated images, internal/external links, and CTAs to create professional-quality content at a fraction of the cost of hiring a freelancer.",
+    "tool_info_review": 5,
+    "collected_count": 7, 
+    "is_free": false,
+    "is_ad": false,
+    "month_visited_count": 0,
+    "pricing": ["<div data-v-359813c2=\"\" class=\"border rounded p-4 w-72 bg-white text-gray-600\"><div data-v-359813c2=\"\" class=\"text-lg mb-2 text-gray-600 break-all\"><strong style=\"color: #191919; font-size: 20px;\">$19</strong> /month</div> <div data-v-359813c2=\"\" class=\"font-bold text-lg mb-05\">Starter</div> <div data-v-359813c2=\"\" class=\"text-base text-gray-700\">10 blog posts / month, 1 Publication, 1 Automation, 1 Website Integration, 1 Channel Integration, Auto Screenshots, Internal Links</div></div>", "<div data-v-359813c2=\"\" class=\"border rounded p-4 w-72 bg-white text-gray-600\"><div data-v-359813c2=\"\" class=\"text-lg mb-2 text-gray-600 break-all\"><strong style=\"color: #191919; font-size: 20px;\">$49</strong> /month</div> <div data-v-359813c2=\"\" class=\"font-bold text-lg mb-05\">Pro</div> <div data-v-359813c2=\"\" class=\"text-base text-gray-700\">30 blog posts / month, 3 Publications, 3 Automations, 3 Website Integrations, 3 Channel Integrations, Auto Screenshots, Internal Links, External Links, AI Content Detector / Humanizer, AI Images, Premium Transcriptions, Remove Publication Watermark, Bulk Generation</div></div>", "<div data-v-359813c2=\"\" class=\"border rounded p-4 w-72 bg-white text-gray-600\"><div data-v-359813c2=\"\" class=\"text-lg mb-2 text-gray-600 break-all\"><strong style=\"color: #191919; font-size: 20px;\">$99</strong> /month</div> <div data-v-359813c2=\"\" class=\"font-bold text-lg mb-05\">Business</div> <div data-v-359813c2=\"\" class=\"text-base text-gray-700\">100 blog posts / month, 10 Publications, 10 Automations, 10 Website Integrations, 10 Channel Integrations, Auto Screenshots, Internal Links, External Links, AI Content Detector / Humanizer, AI Images, Premium Transcriptions, Remove Publication Watermark, Bulk Generation, Priority Support</div></div>"],
+    "feature": ["Video to text conversion", "SEO optimization", "Automatic image generation and insertion", "Internal and external link integration", "Customizable AI instructions", "Publication platform"],
+    "pros": ["Saves time and money compared to hiring a freelancer", "Easy to use with a simple interface", "Supports 30+ languages", "SEO optimized content", "Customizable with AI instructions", "Offers a free plan", "Publication platform for users without a website"], 
+    "cons": ["Requires spoken audio in the video", "External links are not available in the Starter plan", "AI Content Detector / Humanizer are not available in the Starter plan", "AI Images are not available in the Starter plan", "Premium Transcriptions are not available in the Starter plan", "Remove Publication Watermark are not available in the Starter plan", "Bulk Generation is not available in the Starter plan", "Priority Support is not available in the Starter plan"]
+ }

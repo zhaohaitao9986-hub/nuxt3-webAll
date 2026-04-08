@@ -45,6 +45,15 @@ model CategoryLevel2 {
 
   // 多对多关联工具
   toolCategories  AiToolCategory[]
+  //新增字段
+  what_is_summary String?
+  feature         String[]
+  who_is_use      String?
+  how_do_work     String?
+  advantages      String?
+  faq             String[]
+
+
 
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
@@ -82,6 +91,9 @@ model AiTool {
   pros                String[]
   cons                String[]
   //新增字段
+  pricing             String[]
+  feature             String[]
+  tool_info_review  Decimal? @db.Decimal(3, 1)
 
   // 多对多关联（已修复）
   toolCategories      AiToolCategory[]
