@@ -81,6 +81,7 @@ model AiTool {
 
   pros                String[]
   cons                String[]
+  //新增字段
 
   // 多对多关联（已修复）
   toolCategories      AiToolCategory[]
