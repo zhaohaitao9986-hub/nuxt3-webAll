@@ -51,7 +51,7 @@ model CategoryLevel2 {
   who_is_use      String?
   how_do_work     String?
   advantages      String?
-  faq             String[]
+  faq             Json?
 
 
 
