@@ -25,6 +25,12 @@ function parseCount(str) {
     return Math.floor(num);
 }
 
+// 随机延迟函数：模拟人类操作的不确定性
+const randomDelay = (min = 1500, max = 3500) => {
+    const delay = Math.floor(Math.random() * (max - min + 1)) + min;
+    return new Promise(resolve => setTimeout(resolve, delay));
+};
+
 // 主爬取函数
 async function crawlCategoryDetail(categoryHandle) {
     console.log(`🚀 开始爬取分类: ${categoryHandle}`);
@@ -39,6 +45,17 @@ async function crawlCategoryDetail(categoryHandle) {
     });
 
     const page = await browser.newPage();
+    // 【优化1】拦截不必要的资源，极速加载页面
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+        const resourceType = request.resourceType();
+        // 屏蔽图片、样式、字体和媒体，只放行文档、脚本和 API 请求
+        if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+            request.abort();
+        } else {
+            request.continue();
+        }
+    });
     // 【新增】把浏览器的 console 输出转发到 Node.js 终端
     //   page.on('console', msg => {
     //     for (let i = 0; i < msg.args().length; ++i)
@@ -75,7 +92,8 @@ async function crawlCategoryDetail(categoryHandle) {
     let categoryMetaSaved = false;
 
     while (hasNextPage) {
-        await new Promise(resolve => setTimeout(resolve, 10000));
+        // 【优化2】去掉了死板的 10秒 等待，使用随机短暂等待
+        await randomDelay(2000, 4000);
         const url = currentPage === 1
             ? `https://www.toolify.ai/category/${categoryHandle}`
             : `https://www.toolify.ai/category/${categoryHandle}?page=${currentPage}`;
@@ -83,11 +101,15 @@ async function crawlCategoryDetail(categoryHandle) {
         console.log(`📄 正在访问: ${url}`);
 
         try {
-            await page.goto(url, { waitUntil: 'networkidle2', timeout: 90000 });
+            // 【优化3】不再使用网络完全空闲，改用 domcontentloaded 配合元素等待
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-            // 模拟滚动，触发懒加载
+            // 确保核心数据容器加载出来再继续操作
+            await page.waitForSelector('.category-container', { timeout: 15000 });
+
+            // 【优化4】改进的动态滚动，更快且更像人
             await autoScroll(page);
-            await new Promise(resolve => setTimeout(resolve, 5000));
+            await randomDelay(1000, 2000); // 滚动后短暂停顿，等待可能的懒加载 JS 执行
 
             // --- 阶段 1: 提取分类公共信息 (仅第一页) ---
             if (!categoryMetaSaved) {
@@ -118,7 +140,7 @@ async function crawlCategoryDetail(categoryHandle) {
             }
 
             // 安全起见，加一个硬编码的最大上限防止死循环 (比如 100 页)
-            if (currentPage > 100) {
+            if (currentPage > 1000) {
                 hasNextPage = false;
                 console.log("⚠️ 触发安全上限 100 页，强制停止");
             }
@@ -134,21 +156,25 @@ async function crawlCategoryDetail(categoryHandle) {
     console.log("🎉 所有页面爬取完成");
 }
 
-// 辅助：自动滚动
+// 【优化5】改进的滚动：增加步长，加入微小的随机扰动，提速不失真
 async function autoScroll(page) {
     await page.evaluate(async () => {
         await new Promise((resolve) => {
             let totalHeight = 0;
-            const distance = 100;
+            const scrollDistance = () => Math.floor(Math.random() * 200) + 300; // 随机向下滚 300-500px
+
             const timer = setInterval(() => {
                 const scrollHeight = document.body.scrollHeight;
+                const distance = scrollDistance();
                 window.scrollBy(0, distance);
                 totalHeight += distance;
-                if (totalHeight >= scrollHeight) {
+
+                // 如果接近底部
+                if (totalHeight >= scrollHeight - 200) {
                     clearInterval(timer);
                     resolve();
                 }
-            }, 100);
+            }, 150); // 每 150ms 滚一次，比之前的 100px/100ms 快很多
         });
     });
 }
@@ -354,6 +380,19 @@ async function extractToolsFromPage(page) {
                 const name = text('a h2', cardTextContent);
                 // console.log(name,'121212')
                 if (!name) return;
+                const handleEl = $('a', cardTextContent);
+                let localHandle = '';
+                if (handleEl) {
+                    const rawHref = handleEl.href || handleEl.dataset.href || '';
+                    if (rawHref) {
+                        // 方案 A：直接替换掉 /tool/ (推荐，因为你明确知道前缀)
+                        // localHandle = rawHref.replace('/tool/', '');
+
+                        // 方案 B：如果想更稳健（防止前缀变化），可以用 split 取最后一段
+                        const parts = rawHref.split('/').filter(Boolean);
+                        localHandle = parts[parts.length - 1] || '';
+                    }
+                }
 
                 // 4. Description (card-text-content 下的 p)
                 const description = text('p', cardTextContent);
@@ -397,38 +436,68 @@ async function extractToolsFromPage(page) {
 
                 if (categoryCollapse) {
                     const collapseItems = $$('.el-collapse-item', categoryCollapse);
+                    const itemCount = collapseItems.length; // 获取折叠项总数
 
-                    // 注意：NodeList 转数组后通过索引获取
-                    // 1. Pricing: 第 1 个 (索引 0)
-                    if (collapseItems[0]) {
-                        const content = $('.el-collapse-item__content', collapseItems[0]);
-                        if (content) {
-                            pricing = $$('.rounded', content).map(el => el.outerHTML || el.innerText);
+                    // ==============================================
+                    // 核心逻辑：根据长度判断结构
+                    // ==============================================
+                    if (itemCount === 4) {
+                        // 正常情况：4项 → pricing存在
+                        // 1. Pricing
+                        if (collapseItems[0]) {
+                            const content = $('.el-collapse-item__content', collapseItems[0]);
+                            if (content) {
+                                const pricingElements = $$('.rounded', content);
+                                if (pricingElements.length > 0) {
+                                    pricing = pricingElements.map(el => el.outerHTML || el.innerText);
+                                }
+                            }
+                        }
+                        // 2. What is Summary
+                        if (collapseItems[1]) {
+                            const wrap = $('.el-collapse-item__wrap', collapseItems[1]);
+                            what_is_summary = text('.text-lg', wrap) || '';
+                        }
+                        // 3. Feature
+                        if (collapseItems[2]) {
+                            const content = $('.el-collapse-item__content', collapseItems[2]);
+                            if (content) {
+                                feature = $$('li', content).map(li => li.innerText.trim());
+                            }
+                        }
+                        // 4. Pros/Cons
+                        if (collapseItems[3]) {
+                            const content = $('.el-collapse-item__content', collapseItems[3]);
+                            if (content) {
+                                const uls = $$('ul', content);
+                                if (uls[0]) pros = $$('li', uls[0]).map(li => li.innerText.trim());
+                                if (uls[1]) cons = $$('li', uls[1]).map(li => li.innerText.trim());
+                            }
                         }
                     }
-                    // console.log(pricing,'1-55555')
-                    // 2. What is Summary: 第 2 个 (索引 1)
-                    if (collapseItems[1]) {
-                        // 路径: el-collapse-item__wrap 下的 text-lg
-                        const wrap = $('.el-collapse-item__wrap', collapseItems[1]);
-                        what_is_summary = text('.text-lg', wrap);
-                    }
-                    // console.log('1-66666')
-                    // 3. Feature: 第 3 个 (索引 2)
-                    if (collapseItems[2]) {
-                        const content = $('.el-collapse-item__content', collapseItems[2]);
-                        if (content) {
-                            feature = $$('li', content).map(li => li.innerText.trim());
+
+                    if (itemCount === 3) {
+                        // 缺少Pricing：只有3项 → 全部索引前移
+                        // 0 → What is Summary
+                        if (collapseItems[0]) {
+                            const wrap = $('.el-collapse-item__wrap', collapseItems[0]);
+                            what_is_summary = text('.text-lg', wrap) || '';
                         }
-                    }
-                    // console.log('1-7777777')
-                    // 4. Pros/Cons: 第 4 个 (索引 3)
-                    if (collapseItems[3]) {
-                        const content = $('.el-collapse-item__content', collapseItems[3]);
-                        if (content) {
-                            const uls = $$('ul', content);
-                            if (uls[0]) pros = $$('li', uls[0]).map(li => li.innerText.trim());
-                            if (uls[1]) cons = $$('li', uls[1]).map(li => li.innerText.trim());
+                        // 1 → Feature
+                        if (collapseItems[1]) {
+                            const content = $('.el-collapse-item__content', collapseItems[1]);
+                            if (content) {
+                                feature = $$('li', content).map(li => li.innerText.trim());
+                            }
+                        }
+                        // 2 → Pros/Cons
+                        if (collapseItems[2]) {
+                            const content = $('.el-collapse-item__content', collapseItems[2]);
+                            if (content) {
+                                const uls = $$('ul', content);
+                                if (uls[0]) pros = $$('li', uls[0]).map(li => li.innerText.trim());
+                                if (uls[1]) cons = $$('li', uls[1]).map(li => li.innerText.trim());
+                            }
                         }
                     }
                 }
@@ -441,17 +510,7 @@ async function extractToolsFromPage(page) {
                     isFree = false;
                 }
 
-                // ================= 修复点 2：直接在这里写 handle 生成逻辑，不调用外部函数 =================
-                let localHandle = '';
-                if (name) {
-                    localHandle = name
-                        .toLowerCase()
-                        .replace(/ & /g, '-')
-                        .replace(/\s+/g, '-')
-                        .replace(/[^a-z0-9-]/g, '')
-                        .replace(/-+/g, '-')
-                        .trim();
-                }
+                // console.log(localHandle,'1-222222222')
 
                 // 构建最终对象
                 tools.push({
@@ -527,20 +586,48 @@ async function saveToolsToDB(tools, categoryId) {
 async function main() {
     console.log("🚀 开始批量爬取任务...");
 
+    // 🔥 新增：指定要单独爬取的二级分类 handle
+    // 留空 = 走批量逻辑；填写 = 只爬这一个
+    const TARGET_HANDLE = '';  // 例如：'ai-title-generator'
+
     // 1. 从数据库读取所有二级分类
     const allCategories = await prisma.categoryLevel2.findMany({
         select: { id: true, handle: true, name: true },
-        // 如果你只想爬取部分，可以在这里加 where 条件
-        // where: { id: { gt: 10 } } 
+        orderBy: { id: 'asc' }
     });
 
-    console.log(`📋 共找到 ${allCategories.length} 个分类，准备开始...`);
+    console.log(`📋 共找到 ${allCategories.length} 个分类`);
 
-    // 2. 🔥 找到起始位置：寻找 handle 为 'ai-title-generator' 的索引
-    const startHandle = 'ai-title-generator';
+    // ==============================================
+    // 🔥 核心：如果指定了 TARGET_HANDLE，只爬这一个
+    // ==============================================
+    if (TARGET_HANDLE) {
+        const targetCat = allCategories.find(c => c.handle === TARGET_HANDLE);
+        if (!targetCat) {
+            console.error(`❌ 未找到指定的 handle: ${TARGET_HANDLE}`);
+            return;
+        }
+
+        console.log(`\n=====================================`);
+        console.log(`🎯 单独爬取模式：正在处理 [${targetCat.name}] (${targetCat.handle})`);
+
+        try {
+            await crawlCategoryDetail(targetCat.handle);
+            console.log(`✅ 单独爬取完成！`);
+        } catch (error) {
+            console.error(`❌ 单独爬取失败:`, error.message);
+        }
+
+        // 单独爬取完成后直接结束
+        return;
+    }
+
+    // ==============================================
+    // 👇 下面是你原来的批量逻辑（没有指定 TARGET_HANDLE 才会走）
+    // ==============================================
+    const startHandle = '';
     let startIndex = allCategories.findIndex(c => c.handle === startHandle);
 
-    // 如果没找到，从头开始 (索引 0)
     if (startIndex === -1) {
         console.log(`⚠️ 未找到 handle 为 [${startHandle}] 的分类，将从头开始`);
         startIndex = 0;
@@ -548,24 +635,19 @@ async function main() {
         console.log(`✅ 找到起始点，将从 [${allCategories[startIndex].name}] 开始`);
     }
 
-    // 3. 🔥 循环：从 startIndex 开始
+    // 批量循环
     for (let i = startIndex; i < allCategories.length; i++) {
         const category = allCategories[i];
-        
+
         console.log(`\n=====================================`);
-        console.log(`🔛 [进度 ${i + 1}/${allCategories.length}] 正在处理: [${category.name}] (${category.handle})`);
+        console.log(`🔛 [进度 ${i + 1}/${allCategories.length}] ${category.id}  正在处理: [${category.name}] (${category.handle})`);
 
         try {
-            // 执行爬取
             await crawlCategoryDetail(category.handle);
-
         } catch (error) {
             console.error(`❌ 分类 [${category.name}] 爬取失败:`, error.message);
-            // 这里不抛出错误，让循环继续执行下一个
         }
 
-        // 4. 重要：两个分类之间休息一下
-        // 只有不是最后一个的时候才休息，节省时间
         if (i < allCategories.length - 1) {
             console.log(`⏳ 等待 15 秒后继续...`);
             await new Promise(resolve => setTimeout(resolve, 15000));

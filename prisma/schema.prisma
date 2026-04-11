@@ -93,7 +93,17 @@ model AiTool {
   //新增字段
   pricing             String[]
   feature             String[]
-  tool_info_review  Decimal? @db.Decimal(3, 1)
+  tool_info_review    Decimal? @db.Decimal(3, 1)
+
+  add_time            String?
+  website_type        String[]
+  social_email        String[]
+  tags                String[]
+  faq                 Json?
+  for_jobs            String[]
+  use_cases           String[] 
+  company_info        String? 
+  recommend_learn     String[] 
 
   // 多对多关联（已修复）
   toolCategories      AiToolCategory[]
