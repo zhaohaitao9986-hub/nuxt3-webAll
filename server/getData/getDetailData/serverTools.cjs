@@ -2,44 +2,75 @@ const { PrismaClient } = require('@prisma/client');
 const puppeteer = require('puppeteer');
 
 const prisma = new PrismaClient();
-// ==================== 配置 ====================
-const CONCURRENCY = 1;          // 稳定5并发
-const PAGE_TIMEOUT = 60000;
-const DELAY_AFTER_SCROLL = 300; // 滚动等待压缩到300ms
-const START_FROM_HANDLE = 'video-to-tweet';    // 从指定handle开始
 
-// ==================== 爬虫函数 ====================
-async function scrapeAndUpdateTool(handle, browser, workerId) {
+// ==================== 配置 ====================
+const CONCURRENCY = 2; // 多并发，2/3/5都可以
+const PAGE_TIMEOUT = 60000;
+const DELAY_AFTER_SCROLL = 300;
+const START_FROM_HANDLE = 'quickpenai';
+
+// 全局统计
+let successCount = 0;
+let emptyAddTimeCount = 0;
+let totalTasks = 0;
+
+// ==================== 单个爬虫任务（独立浏览器+独立伪装）====================
+async function scrapeAndUpdateTool(handle, workerId) {
+    // ✅ 关键：每个任务独立浏览器，完全隔离，点击互不干扰
+    const browser = await puppeteer.launch({
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-blink-features=AutomationControlled'
+        ]
+    });
+
     const page = await browser.newPage();
+    await page.setDefaultNavigationTimeout(PAGE_TIMEOUT);
+    await page.setDefaultTimeout(10000);
+
+    // 独立请求拦截
     await page.setRequestInterception(true);
-    page.on('request', req => 
-        ['image','font','media'].includes(req.resourceType()) ? req.abort() : req.continue()
-    );
+    page.on('request', req => {
+        const type = req.resourceType();
+        if (['image', 'font', 'media'].includes(type)) req.abort();
+        else req.continue();
+    });
+
+    // 独立UA伪装
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
-    await page.evaluateOnNewDocument(() => Object.defineProperty(navigator, 'webdriver', { get: () => undefined }));
+    await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    });
 
     try {
         const url = `https://www.toolify.ai/tool/${handle}`;
-        console.log(`[W${workerId}] 🌐 ${handle}`);
+        console.log(`[W${workerId}] 🌐 访问: ${handle}`);
+
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT });
         await autoScroll(page);
         await new Promise(r => setTimeout(r, DELAY_AFTER_SCROLL));
 
+        // 执行数据提取（保留完整点击FAQ逻辑）
         const scrapedData = await extractData(page);
         const safeData = { ...scrapedData, month_visited_count: scrapedData.month_visited_count ?? 0 };
-        await prisma.aiTool.update({ where: { handle }, data: safeData });
 
-        console.log(`[W${workerId}] ✅ ${handle}`);
+        await prisma.aiTool.update({ where: { handle }, data: safeData });
+        console.log(`[W${workerId}] ✅ 完成: ${handle} | FAQ数量: ${scrapedData.faq.length}`);
+
         return { success: true, handle, isAddTimeEmpty: !scrapedData.add_time };
     } catch (e) {
-        console.log(`[W${workerId}] ❌ ${handle} | ${e.message}`);
+        console.log(`[W${workerId}] ❌ 失败: ${handle} | ${e.message}`);
         return { success: false, handle, isAddTimeEmpty: false };
     } finally {
-        await page.close();
+        await page.close().catch(() => {});
+        await browser.close().catch(() => {}); // 独立浏览器自己关闭
     }
 }
 
-// ==================== 你的原生抓取逻辑（仅优化FAQ等待，其余不动）====================
+// ==================== 访问量解析（原逻辑不变）====================
 function parseVisitorsNumber(text) {
     if (!text) return 0;
     const clean = text.replace(/,/g, '').trim();
@@ -51,6 +82,7 @@ function parseVisitorsNumber(text) {
     return isNaN(num) ? 0 : Math.round(num * multiplier);
 }
 
+// ==================== 数据提取（保留完整FAQ点击逻辑，原逻辑几乎不动）====================
 async function extractData(page) {
     const result = {
         add_time: '', website_type: [], social_email: [], faq: [], use_cases: [],
@@ -119,14 +151,15 @@ async function extractData(page) {
                 const contentDiv = await section.$('div');
                 if (!contentDiv) continue;
 
-                // ==================== 核心优化：FAQ 不再死等2秒！====================
+                // ==================== 保留原点击FAQ逻辑，仅优化等待时间 ====================
                 if (h2Text.includes('FAQ')) {
                     const dtList = await contentDiv.$$('dt');
                     for (const dt of dtList) {
                         try {
+                            // 必须点击才能展开，原逻辑保留
                             await dt.click();
-                            // 🔥 智能等待：内容出现就立刻走，最多等300ms
-                            await dt.waitForSelector('+ div', { timeout: 2000 }).catch(() => {});
+                            // 优化等待：最多等1000ms，保证面板展开
+                            await dt.waitForSelector('+ div', { timeout: 1000 }).catch(() => {});
                             
                             const titleEl = await dt.$('h3');
                             const title = titleEl ? await page.evaluate(el => el.textContent.trim(), titleEl) : '';
@@ -140,7 +173,10 @@ async function extractData(page) {
                                     : await page.evaluate(el => el.textContent.trim(), descEl);
                                 if (title) result.faq.push({ title, desc });
                             }
-                        } catch (e) { console.log('跳过FAQ'); }
+                        } catch (e) {
+                            // 单个FAQ失败不影响整体
+                            continue;
+                        }
                     }
                 } else if (h2Text.includes('Use Cases')) {
                     const h3List = await contentDiv.$$('h3');
@@ -178,6 +214,7 @@ async function extractData(page) {
     return result;
 }
 
+// ==================== 滚动逻辑（原逻辑不变）====================
 async function autoScroll(page) {
     await page.evaluate(async () => {
         await new Promise(resolve => {
@@ -188,60 +225,62 @@ async function autoScroll(page) {
                 if (totalHeight >= document.body.scrollHeight - window.innerHeight) {
                     clearInterval(timer); resolve();
                 }
-            }, 50); // 滚动加速
+            }, 50);
         });
     });
 }
 
-// ==================== 修复版 5并发调度器（绝对公平，无饥饿）====================
+// ==================== 多并发任务调度 ====================
 async function batchScrapeAll() {
-    console.log(`🚀 启动极速爬取 | 并发数: ${CONCURRENCY}`);
-    let successCount = 0, emptyAddTimeCount = 0;
-    const browser = await puppeteer.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    console.log(`🚀 启动多并发爬取 | 并发数: ${CONCURRENCY} | 独立浏览器隔离`);
+
+    let allTools = await prisma.aiTool.findMany({
+        select: { id: true, handle: true },
+        orderBy: { id: 'asc' }
     });
 
-    try {
-        let allTools = await prisma.aiTool.findMany({ select: { id: true, handle: true }, orderBy: { id: 'asc' } });
-        if (START_FROM_HANDLE) {
-            const idx = allTools.findIndex(t => t.handle === START_FROM_HANDLE);
-            successCount = idx
-            if (idx > -1) allTools = allTools.slice(idx);
+    // 从指定handle开始
+    if (START_FROM_HANDLE) {
+        const idx = allTools.findIndex(t => t.handle === START_FROM_HANDLE);
+        if (idx > -1) {
+            successCount = idx;
+            allTools = allTools.slice(idx);
         }
-        const total = allTools.length;
-        console.log(`📦 待处理: ${total} 条`);
-
-        const tasks = allTools.map(tool => (wid) => scrapeAndUpdateTool(tool.handle, browser, wid));
-        
-        // 🔥 核心修复：每个任务后让出1ms，强制5个Worker公平抢任务
-        async function worker(wid) {
-            console.log(`[W${wid}] 启动成功，准备执行任务`);
-            while (tasks.length) {
-                const task = tasks.shift();
-                if (!task) break;
-                const res = await task(wid);
-                if (res.success) {
-                    successCount++;
-                    if (res.isAddTimeEmpty) emptyAddTimeCount++;
-                    console.log(`📊 进度: ${successCount}/${total} | 空add_time: ${emptyAddTimeCount}`);
-                }
-                // 关键：强制让出事件循环，让其他Worker有机会执行
-                await new Promise(resolve => setTimeout(resolve, 1));
-            }
-            console.log(`[W${wid}] 任务完成，退出`);
-        }
-
-        await Promise.all(Array.from({ length: CONCURRENCY }, (_,i) => worker(i+1)));
-        console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log(`🎉 全部完成 | 成功:${successCount} | 空时间:${emptyAddTimeCount}`);
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━');
-    } catch (e) {
-        console.error('批量错误:', e);
-    } finally {
-        await browser.close();
-        await prisma.$disconnect();
     }
+
+    totalTasks = allTools.length + successCount;
+    console.log(`📦 待处理: ${allTools.length} 条 | 总进度起点: ${successCount}`);
+    const taskQueue = [...allTools];
+
+    // 独立Worker函数
+    async function worker(workerId) {
+        console.log(`[W${workerId}] 独立Worker启动`);
+        while (taskQueue.length > 0) {
+            const tool = taskQueue.shift();
+            if (!tool) break;
+
+            const res = await scrapeAndUpdateTool(tool.handle, workerId);
+            if (res.success) {
+                successCount++;
+                if (res.isAddTimeEmpty) emptyAddTimeCount++;
+            }
+
+            console.log(`📊 进度: ${successCount}/${totalTasks} | 空add_time: ${emptyAddTimeCount}`);
+            // 轻微间隔，防封IP
+            await new Promise(r => setTimeout(r, 500));
+        }
+        console.log(`[W${workerId}] Worker任务完成`);
+    }
+
+    // 启动多并发
+    const workers = Array.from({ length: CONCURRENCY }, (_, i) => worker(i + 1));
+    await Promise.all(workers);
+
+    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`🎉 全部完成 | 成功:${successCount} | 空add_time:${emptyAddTimeCount}`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━');
+
+    await prisma.$disconnect();
 }
 
 batchScrapeAll();
