@@ -3,8 +3,8 @@ const puppeteer = require('puppeteer');
 
 const prisma = new PrismaClient();
 // ==================== 配置 ====================
-const CONCURRENCY = 5;          // 稳定5并发
-const PAGE_TIMEOUT = 30000;
+const CONCURRENCY = 1;          // 稳定5并发
+const PAGE_TIMEOUT = 60000;
 const DELAY_AFTER_SCROLL = 300; // 滚动等待压缩到300ms
 const START_FROM_HANDLE = 'video-to-tweet';    // 从指定handle开始
 
@@ -126,7 +126,7 @@ async function extractData(page) {
                         try {
                             await dt.click();
                             // 🔥 智能等待：内容出现就立刻走，最多等300ms
-                            await dt.waitForSelector('+ div', { timeout: 300 }).catch(() => {});
+                            await dt.waitForSelector('+ div', { timeout: 2000 }).catch(() => {});
                             
                             const titleEl = await dt.$('h3');
                             const title = titleEl ? await page.evaluate(el => el.textContent.trim(), titleEl) : '';
