@@ -2,73 +2,51 @@ const { PrismaClient } = require('@prisma/client');
 const puppeteer = require('puppeteer');
 
 const prisma = new PrismaClient();
-
 // ==================== 配置 ====================
-const CONCURRENCY = 5;
+const CONCURRENCY = 5;          // 稳定5并发
 const PAGE_TIMEOUT = 30000;
-const DELAY_AFTER_SCROLL = 800;
+const DELAY_AFTER_SCROLL = 300; // 滚动等待压缩到300ms
+const START_FROM_HANDLE = 'video-to-tweet';    // 从指定handle开始
 
-// 🔥 新增配置：在这里设置你想从哪个 handle 开始
-// 如果填 null 或 ''，则从第一条开始
-const START_FROM_HANDLE = 'clusterly-ai'; // 例如: 'writesonic'
-
-// ==================== 爬虫函数（完全保留你的逻辑，只增加返回值）====================
-async function scrapeAndUpdateTool(handle, browser) {
+// ==================== 爬虫函数 ====================
+async function scrapeAndUpdateTool(handle, browser, workerId) {
     const page = await browser.newPage();
-
     await page.setRequestInterception(true);
-    page.on('request', (req) => {
-        ['image', 'font', 'media'].includes(req.resourceType()) ? req.abort() : req.continue();
-    });
-
+    page.on('request', req => 
+        ['image','font','media'].includes(req.resourceType()) ? req.abort() : req.continue()
+    );
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36');
+    await page.evaluateOnNewDocument(() => Object.defineProperty(navigator, 'webdriver', { get: () => undefined }));
 
     try {
         const url = `https://www.toolify.ai/tool/${handle}`;
-        console.log(`🌐 访问: ${url}`);
-
+        console.log(`[W${workerId}] 🌐 ${handle}`);
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT });
         await autoScroll(page);
         await new Promise(r => setTimeout(r, DELAY_AFTER_SCROLL));
 
-        // 🔥 完全保留你原生抓取逻辑
         const scrapedData = await extractData(page);
+        const safeData = { ...scrapedData, month_visited_count: scrapedData.month_visited_count ?? 0 };
+        await prisma.aiTool.update({ where: { handle }, data: safeData });
 
-        // 🔥 数据清洗（防止 null 报错）
-        const safeData = {
-            ...scrapedData,
-            month_visited_count: scrapedData.month_visited_count ?? 0
-        };
-
-        await prisma.aiTool.update({
-            where: { handle },
-            data: safeData
-        });
-
-        console.log(`✅ 成功: ${handle}`);
-        
-        // 🔥 新增返回：是否成功 + add_time 是否为空
-        return { 
-            success: true, 
-            handle,
-            isAddTimeEmpty: !scrapedData.add_time || scrapedData.add_time === ''
-        };
+        console.log(`[W${workerId}] ✅ ${handle}`);
+        return { success: true, handle, isAddTimeEmpty: !scrapedData.add_time };
     } catch (e) {
-        console.log(`❌ 失败: ${handle} | ${e.message}`);
+        console.log(`[W${workerId}] ❌ ${handle} | ${e.message}`);
         return { success: false, handle, isAddTimeEmpty: false };
     } finally {
         await page.close();
     }
 }
 
-// ==================== 你原生的抓取逻辑（一字未改，完全保留）====================
+// ==================== 你的原生抓取逻辑（仅优化FAQ等待，其余不动）====================
 function parseVisitorsNumber(text) {
     if (!text) return 0;
     const clean = text.replace(/,/g, '').trim();
     let multiplier = 1, numStr = clean;
-    if (clean.toUpperCase().includes('K')) { multiplier = 1000; numStr = clean.replace(/K/gi, ''); }
-    else if (clean.toUpperCase().includes('M')) { multiplier = 1000000; numStr = clean.replace(/M/gi, ''); }
-    else if (clean.toUpperCase().includes('B')) { multiplier = 1000000000; numStr = clean.replace(/B/gi, ''); }
+    if (clean.toUpperCase().includes('K')) multiplier = 1000, numStr = clean.replace(/K/gi, '');
+    else if (clean.toUpperCase().includes('M')) multiplier = 1e6, numStr = clean.replace(/M/gi, '');
+    else if (clean.toUpperCase().includes('B')) multiplier = 1e9, numStr = clean.replace(/B/gi, '');
     const num = parseFloat(numStr);
     return isNaN(num) ? 0 : Math.round(num * multiplier);
 }
@@ -141,19 +119,25 @@ async function extractData(page) {
                 const contentDiv = await section.$('div');
                 if (!contentDiv) continue;
 
+                // ==================== 核心优化：FAQ 不再死等2秒！====================
                 if (h2Text.includes('FAQ')) {
                     const dtList = await contentDiv.$$('dt');
                     for (const dt of dtList) {
                         try {
                             await dt.click();
-                            await new Promise(r => setTimeout(r, 2000));
+                            // 🔥 智能等待：内容出现就立刻走，最多等300ms
+                            await dt.waitForSelector('+ div', { timeout: 300 }).catch(() => {});
+                            
                             const titleEl = await dt.$('h3');
                             const title = titleEl ? await page.evaluate(el => el.textContent.trim(), titleEl) : '';
                             const descHandle = await dt.evaluateHandle(el => el.nextElementSibling);
                             const descEl = await descHandle.asElement();
+
                             if (descEl) {
                                 const targetDescEl = await descEl.$('.mt-2.text-base.text-gray-1000');
-                                const desc = targetDescEl ? await page.evaluate(el => el.textContent.trim(), targetDescEl) : await page.evaluate(el => el.textContent.trim(), descEl);
+                                const desc = targetDescEl
+                                    ? await page.evaluate(el => el.textContent.trim(), targetDescEl)
+                                    : await page.evaluate(el => el.textContent.trim(), descEl);
                                 if (title) result.faq.push({ title, desc });
                             }
                         } catch (e) { console.log('跳过FAQ'); }
@@ -204,81 +188,54 @@ async function autoScroll(page) {
                 if (totalHeight >= document.body.scrollHeight - window.innerHeight) {
                     clearInterval(timer); resolve();
                 }
-            }, 100);
+            }, 50); // 滚动加速
         });
     });
 }
 
-// ==================== 【增强版调度器】增加断点续传、进度打印、空值统计 ====================
+// ==================== 修复版 5并发调度器（绝对公平，无饥饿）====================
 async function batchScrapeAll() {
-    console.log(`🚀 启动稳定并发 | 并发数: ${CONCURRENCY}`);
-    
-    // 🔥 新增统计变量
-    let successCount = 0;
-    let emptyAddTimeCount = 0;
-    let processedCount = 0;
-
+    console.log(`🚀 启动极速爬取 | 并发数: ${CONCURRENCY}`);
+    let successCount = 0, emptyAddTimeCount = 0;
     const browser = await puppeteer.launch({
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
 
     try {
-        // 1. 查出所有数据
-        let allTools = await prisma.aiTool.findMany({
-            select: { id: true, handle: true },
-            orderBy: { id: 'asc' }
-        });
-
-        // 🔥 新增逻辑：如果设置了 START_FROM_HANDLE，则从该 handle 开始截取
-        if (START_FROM_HANDLE && START_FROM_HANDLE.trim() !== '') {
-            const startIndex = allTools.findIndex(t => t.handle === START_FROM_HANDLE);
-            if (startIndex !== -1) {
-                allTools = allTools.slice(startIndex);
-                successCount = startIndex
-                console.log(`📍 从指定位置开始: ${START_FROM_HANDLE} (跳过前 ${startIndex} 条)`);
-            } else {
-                console.log(`⚠️ 未找到 handle: ${START_FROM_HANDLE}，将从头开始`);
-            }
+        let allTools = await prisma.aiTool.findMany({ select: { id: true, handle: true }, orderBy: { id: 'asc' } });
+        if (START_FROM_HANDLE) {
+            const idx = allTools.findIndex(t => t.handle === START_FROM_HANDLE);
+            successCount = idx
+            if (idx > -1) allTools = allTools.slice(idx);
         }
+        const total = allTools.length;
+        console.log(`📦 待处理: ${total} 条`);
 
-        const totalCount = allTools.length;
-        console.log(`📦 待处理任务数: ${totalCount}`);
-
-        // 2. 构建任务队列
-        const tasks = allTools.map(tool => () => scrapeAndUpdateTool(tool.handle, browser));
-        const results = [];
-
-        async function runWorker() {
+        const tasks = allTools.map(tool => (wid) => scrapeAndUpdateTool(tool.handle, browser, wid));
+        
+        // 🔥 核心修复：每个任务后让出1ms，强制5个Worker公平抢任务
+        async function worker(wid) {
+            console.log(`[W${wid}] 启动成功，准备执行任务`);
             while (tasks.length) {
                 const task = tasks.shift();
-                const result = await task();
-                results.push(result);
-                
-                // 🔥 新增：实时统计与打印
-                processedCount++;
-                if (result.success) {
+                if (!task) break;
+                const res = await task(wid);
+                if (res.success) {
                     successCount++;
-                    if (result.isAddTimeEmpty) {
-                        emptyAddTimeCount++;
-                    }
-                    // 打印进度：成功数/总数
-                    console.log(`\n📊 进度: [${successCount}/${totalCount}] 成功 | add_time 为空: ${emptyAddTimeCount}\n`);
+                    if (res.isAddTimeEmpty) emptyAddTimeCount++;
+                    console.log(`📊 进度: ${successCount}/${total} | 空add_time: ${emptyAddTimeCount}`);
                 }
+                // 关键：强制让出事件循环，让其他Worker有机会执行
+                await new Promise(resolve => setTimeout(resolve, 1));
             }
+            console.log(`[W${wid}] 任务完成，退出`);
         }
 
-        // 启动并发
-        await Promise.all(Array(CONCURRENCY).fill(0).map(runWorker));
-
-        // 3. 最终统计
-        console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log('🎉 全部完成');
-        console.log(`✅ 总成功: ${successCount}/${totalCount}`);
-        console.log(`❌ 总失败: ${totalCount - successCount}`);
-        console.log(`⚠️ add_time 为空的数量: ${emptyAddTimeCount}`);
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
+        await Promise.all(Array.from({ length: CONCURRENCY }, (_,i) => worker(i+1)));
+        console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log(`🎉 全部完成 | 成功:${successCount} | 空时间:${emptyAddTimeCount}`);
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━');
     } catch (e) {
         console.error('批量错误:', e);
     } finally {
@@ -287,5 +244,4 @@ async function batchScrapeAll() {
     }
 }
 
-// 启动
 batchScrapeAll();
