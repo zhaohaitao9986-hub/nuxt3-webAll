@@ -1,7 +1,5 @@
 <template>
    <div :data-domain="domain">
-    <div>11111</div>
-    <div>6666666</div>
       <component :is="activeView" v-if="activeView" />
       <div class="mobile:grid-cols-1 mobile:gap-4"></div>
    </div>

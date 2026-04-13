@@ -5,9 +5,9 @@ const prisma = new PrismaClient();
 
 // ==================== 配置 ====================
 const CONCURRENCY = 2; // 多并发，2/3/5都可以
-const PAGE_TIMEOUT = 60000;
+const PAGE_TIMEOUT = 90000;
 const DELAY_AFTER_SCROLL = 300;
-const START_FROM_HANDLE = 'quickpenai';
+const START_FROM_HANDLE = 'deepseek';
 
 // 全局统计
 let successCount = 0;
@@ -49,7 +49,10 @@ async function scrapeAndUpdateTool(handle, workerId) {
         const url = `https://www.toolify.ai/tool/${handle}`;
         console.log(`[W${workerId}] 🌐 访问: ${handle}`);
 
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT }).catch(err => {
+             console.log(`[W${workerId}] ⏳ ${handle} 页面加载超时`);
+             throw new Error('PAGE_TIMEOUT');
+         });
         await autoScroll(page);
         await new Promise(r => setTimeout(r, DELAY_AFTER_SCROLL));
 
