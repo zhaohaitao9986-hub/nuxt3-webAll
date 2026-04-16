@@ -76,15 +76,20 @@ const sites: Record<string, SiteConfig> = {
     title: 'Dev Site',
     routes: [
       { pattern: '/', view: 'home' },
+      
+      // 一级分类集合页 (所有分类的入口)
+      { pattern: '/category', view: 'categoryIndex' },
+      
+      // 二级分类落地页 (例如: /category/ai-blog-generator)
+      // 注意：这种设计下，一级和二级都匹配这个正则，你需要在 view 层根据 slug 类型判断渲染
+      { pattern: /^\/category\/([^/]+)$/, view: 'categoryDetail' },
+      
+      // 工具详情页
+      { pattern: /^\/tool\/([^/]+)$/, view: 'toolDetail' },
+      
+      // 搜索与协议
       { pattern: '/search', view: 'search' },
-      { pattern: /^\/app-([^/]+)$/, view: 'appDetail' },
-      { pattern: '/about', view: 'about' },
-      { pattern: /^\/(apps|games)$/, view: 'categoryFirst' },
-      { pattern: /^\/(apps|games)\/([^/]+)$/, view: 'categorySecond' },
-      { pattern: /^\/app-([^/]+)\/download$/, view: 'appDownload' },
-      {
-        pattern: /^\/(disclaimer|about-us|cookies-privacy-policy|terms-of-service)$/, view: 'protocol'
-      }
+      { pattern: /^\/(privacy|terms|about)$/, view: 'protocol' }
     ]
   }
 };
