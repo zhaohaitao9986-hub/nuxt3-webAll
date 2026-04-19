@@ -1,140 +1,132 @@
 <template>
-  <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-    <section class="grid gap-6 lg:grid-cols-[1fr_320px]">
-      <div>
-        <h1 class="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
-          {{ copy.heroTitle }}
-        </h1>
-        <p class="mt-3 max-w-3xl text-slate-600">
-          {{ copy.heroDescription }}
-        </p>
-        <div class="mt-4">
-          <label for="tool-search" class="sr-only">{{ copy.searchPlaceholder }}</label>
-          <input
-            id="tool-search"
-            v-model="search"
-            type="search"
-            :placeholder="copy.searchPlaceholder"
-            class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm shadow-sm outline-none ring-slate-300 transition focus:ring"
+  <div class="relative">
+    <!-- Hero -->
+    <HeroSection />
+
+    <!-- Main content -->
+    <main class="mx-auto w-full max-w-7xl px-4 pb-16 sm:px-6 lg:px-8">
+      <!-- Categories Pill Nav -->
+      <section aria-labelledby="cats-heading" class="pt-2">
+        <h2 id="cats-heading" class="sr-only">Browse categories</h2>
+        <CategoryPills v-model="activeCategory" :items="categoryTabs" />
+      </section>
+
+      <!-- Section A: Trending AI Tools -->
+      <section aria-labelledby="trending-heading" class="mt-10">
+        <div class="mb-5 flex items-end justify-between gap-4">
+          <div>
+            <p class="text-xs font-medium uppercase tracking-[0.2em] text-accent">
+              Today · hand-picked
+            </p>
+            <h2
+              id="trending-heading"
+              class="mt-1 text-2xl font-semibold tracking-tight text-ink-900 sm:text-3xl dark:text-white"
+            >
+              Trending AI Tools
+            </h2>
+          </div>
+          <NuxtLink
+            to="/category"
+            class="group hidden items-center gap-1 text-sm font-medium text-primary-600 transition hover:text-primary-500 dark:text-accent dark:hover:text-accent-400 sm:inline-flex"
           >
+            View all
+            <svg viewBox="0 0 24 24" class="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6l6 6-6 6"/>
+            </svg>
+          </NuxtLink>
         </div>
-      </div>
-      <AdPlaceholder :label="copy.topAdLabel" size="sidebar" />
-    </section>
 
-    <section class="mt-6 flex flex-wrap gap-2">
-      <button
-        v-for="item in categoryTabs"
-        :key="item.handle"
-        type="button"
-        class="rounded-full border px-3 py-1.5 text-sm transition"
-        :class="
-          activeCategory === item.handle
-            ? 'border-slate-900 bg-slate-900 text-white'
-            : 'border-slate-300 bg-white text-slate-700 hover:border-slate-500'
-        "
-        @click="activeCategory = item.handle"
-      >
-        {{ item.name }}
-      </button>
-    </section>
-
-    <section class="mt-8 grid gap-5 lg:grid-cols-[1fr_320px]">
-      <div>
-        <div class="grid gap-4 sm:grid-cols-2">
-          <template v-for="(item, index) in mergedList" :key="item.key">
-            <AdPlaceholder
+        <!-- Bento-ish responsive grid -->
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <template v-for="(item, index) in trendingWithAds" :key="item.key">
+            <AdSlot
               v-if="item.type === 'ad'"
+              variant="native-card"
               :label="item.label"
-              size="feed"
+              :slot-id="item.slotId"
             />
             <ToolCard
               v-else
               :tool="item.tool"
+              :priority="index < 4"
             />
           </template>
         </div>
-        <AdPlaceholder class="mt-6" :label="copy.bottomAdLabel" size="banner" />
-      </div>
+      </section>
 
-      <aside class="space-y-4">
-        <div class="rounded-xl border border-slate-200 bg-white p-4">
-          <h2 class="text-base font-semibold text-slate-900">
-            {{ copy.sidebarTitle }}
-          </h2>
-          <ul class="mt-3 space-y-2 text-sm text-slate-600">
-            <li
-              v-for="tool in tools.slice(0, 5)"
-              :key="tool.handle"
-              class="line-clamp-1"
+      <!-- Between A & B: Full-width banner ad slot -->
+      <section class="mt-12" aria-label="Advertisement">
+        <AdSlot variant="banner" label="Ad Slot · In-between Banner" slot-id="home-mid-banner" />
+      </section>
+
+      <!-- Section B: Featured Collections -->
+      <section aria-labelledby="collections-heading" class="mt-12">
+        <div class="mb-5 flex items-end justify-between gap-4">
+          <div>
+            <p class="text-xs font-medium uppercase tracking-[0.2em] text-signal">
+              Editorial · deep dives
+            </p>
+            <h2
+              id="collections-heading"
+              class="mt-1 text-2xl font-semibold tracking-tight text-ink-900 sm:text-3xl dark:text-white"
             >
-              {{ tool.name }}
-            </li>
-          </ul>
+              Featured Collections
+            </h2>
+            <p class="mt-1 max-w-xl text-sm text-ink-500 dark:text-ink-300">
+              Themed roundups hand-picked by our editors. Perfect for decision-making.
+            </p>
+          </div>
         </div>
-        <AdPlaceholder :label="copy.sidebarAdLabel" size="sidebar" />
-      </aside>
-    </section>
-  </main>
+
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <CollectionCard
+            v-for="(c, i) in collections"
+            :key="c.title"
+            :collection="c"
+            :large="i === 0"
+          />
+        </div>
+      </section>
+
+      <!-- Quick stats strip (social proof) -->
+      <section class="mt-16 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div
+          v-for="stat in stats"
+          :key="stat.label"
+          class="glass rounded-2xl p-4 text-center"
+        >
+          <p class="text-gradient text-2xl font-semibold">{{ stat.value }}</p>
+          <p class="mt-1 text-xs text-ink-500 dark:text-ink-400">{{ stat.label }}</p>
+        </div>
+      </section>
+    </main>
+  </div>
 </template>
 
-<script setup lang="ts">
+<script setup>
+import { ref, computed } from 'vue'
+import HeroSection from './HeroSection.vue'
+import CategoryPills from './CategoryPills.vue'
 import ToolCard from './ToolCard.vue'
-import AdPlaceholder from './AdPlaceholder.vue'
-type CategoryItem = { name: string; handle: string; tool_count: number }
-type ToolItem = {
-  id: number
-  handle: string
-  name: string
-  description: string | null
-  website: string | null
-  website_logo: string | null
-  month_visited_count: number
-  collected_count: number
-  is_free: boolean
-  categories: Array<{ name: string; handle: string }>
-}
-
-type ApiResult = {
-  categories: CategoryItem[]
-  tools: ToolItem[]
-}
-
-const copy = {
-  pageTitle: 'Best AI Tools Directory 2026',
-  pageDescription:
-    'Discover trending AI tools, compare categories, and find the right product faster with curated summaries.',
-  heroTitle: 'Discover the Best AI Tools for Every Workflow',
-  heroDescription:
-    'Compare curated AI products by category, popularity, and use-case. Updated frequently for marketers, creators, and developers.',
-  searchPlaceholder: 'Search AI tools, categories or use-cases...',
-  topAdLabel: 'Top Sponsored Placement',
-  bottomAdLabel: 'In-feed Ad Placement',
-  sidebarAdLabel: 'Sidebar Sponsored Slot',
-  sidebarTitle: 'Trending Right Now',
-  allTab: 'All',
-  insertedAdA: 'Sponsored Result',
-  insertedAdB: 'Recommended Sponsor',
-}
+import CollectionCard from './CollectionCard.vue'
+import AdSlot from './AdSlot.vue'
 
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
-const siteUrl = runtimeConfig.public?.siteUrl || 'https://example.com'
-const search = ref('')
+const siteUrl = runtimeConfig.public?.siteUrl || 'https://aiseekertools.com'
+
 const activeCategory = ref('all')
 
-const { data } = await useAsyncData<ApiResult>(
-  'home-tools-data',
+// ----- Data: tools + categories (SSR) -----
+const { data } = await useAsyncData(
+  'home-landing',
   () =>
     $fetch('/api/tools', {
-      query: {
-        page: 1,
-        pageSize: 20,
-        sort: 'hot',
-      },
+      query: { page: 1, pageSize: 12, sort: 'hot' },
     }),
   {
     default: () => ({ categories: [], tools: [] }),
+    transform: (res) => res || { categories: [], tools: [] },
   },
 )
 
@@ -142,93 +134,122 @@ const tools = computed(() => data.value?.tools || [])
 const categories = computed(() => data.value?.categories || [])
 
 const categoryTabs = computed(() => [
-  { name: copy.allTab, handle: 'all', tool_count: tools.value.length },
+  { name: 'All', handle: 'all', tool_count: tools.value.length },
   ...categories.value,
 ])
 
 const filteredTools = computed(() => {
-  return tools.value.filter((tool) => {
-    const matchedCategory =
-      activeCategory.value === 'all' ||
-      tool.categories.some((category) => category.handle === activeCategory.value)
-    if (!matchedCategory) return false
-    if (!search.value.trim()) return true
-
-    const keyword = search.value.toLowerCase()
-    return (
-      tool.name.toLowerCase().includes(keyword) ||
-      (tool.description || '').toLowerCase().includes(keyword) ||
-      tool.categories.some((category) => category.name.toLowerCase().includes(keyword))
-    )
-  })
+  if (activeCategory.value === 'all') return tools.value
+  return tools.value.filter((t) =>
+    (t.categories || []).some((c) => c.handle === activeCategory.value),
+  )
 })
 
-const mergedList = computed(() => {
-  const adSlots = [
-    { after: 4, label: copy.insertedAdA },
-    { after: 9, label: copy.insertedAdB },
-  ]
-
-  const list: Array<
-    | { key: string; type: 'tool'; tool: ToolItem }
-    | { key: string; type: 'ad'; label: string }
-  > = []
-
-  filteredTools.value.forEach((tool, index) => {
-    list.push({ key: `tool-${tool.id}`, type: 'tool', tool })
-    const ad = adSlots.find((slot) => slot.after === index + 1)
+// Insert 2 native-looking ads inside the trending grid (after slot 4 & 9)
+const trendingWithAds = computed(() => {
+  const list = []
+  const injectAfter = [{ after: 4, slotId: 'home-native-1' }, { after: 9, slotId: 'home-native-2' }]
+  filteredTools.value.forEach((tool, idx) => {
+    list.push({ key: `tool-${tool.id}-${idx}`, type: 'tool', tool })
+    const ad = injectAfter.find((s) => s.after === idx + 1)
     if (ad) {
-      list.push({ key: `ad-${ad.after}`, type: 'ad', label: ad.label })
+      list.push({
+        key: `ad-${ad.slotId}`,
+        type: 'ad',
+        slotId: ad.slotId,
+        label: 'Sponsored',
+      })
     }
   })
-
   return list
 })
 
+// ----- Featured collections (静态示例, 可接后端) -----
+const collections = [
+  {
+    title: 'Top 10 AI Tools for SEO & Content in 2026',
+    excerpt:
+      'From long-form writers to schema automators — a shortlist of the highest-ROI AI tools SEOs are actually shipping with.',
+    handle: 'ai-seo',
+    href: '/collection/top-10-ai-tools-for-seo',
+    kicker: 'Editor\'s Pick',
+    count: 10,
+    gradient: 0,
+    cover: null,
+    logos: [],
+  },
+  {
+    title: 'AI Video Generators That Don\'t Look AI',
+    excerpt: 'Photoreal lipsync, native 4K, realistic avatars — the only 6 tools worth your time.',
+    handle: 'ai-video',
+    kicker: 'Deep Dive',
+    count: 6,
+    gradient: 1,
+    cover: null,
+  },
+  {
+    title: 'Best Free ChatGPT Alternatives',
+    excerpt: 'Open-source, local-first, and zero-login options that rival GPT-4.',
+    handle: 'chatgpt-alternatives',
+    kicker: 'Free Stack',
+    count: 8,
+    gradient: 3,
+    cover: null,
+  },
+]
+
+const stats = [
+  { value: '7,200+', label: 'AI tools curated' },
+  { value: '120K+', label: 'Monthly visitors' },
+  { value: '98%', label: 'Editor approval' },
+  { value: 'Daily', label: 'Fresh updates' },
+]
+
+// ----- SEO -----
 const topToolsForSchema = computed(() => filteredTools.value.slice(0, 10))
 
 useSeoMeta({
-  title: copy.pageTitle,
-  description: copy.pageDescription,
-  ogTitle: copy.pageTitle,
-  ogDescription: copy.pageDescription,
+  title: 'aiseekertools — Discover the best AI tools for any workflow',
+  description:
+    'Curated AI tools directory for creators, marketers, and developers. Compare, filter, and ship with confidence. Updated daily.',
+  ogTitle: 'aiseekertools — The AI tools directory that ships',
+  ogDescription:
+    'Hand-picked AI products, deep dives, and editorial collections. Trusted by 120K+ builders.',
   ogImage: `${siteUrl}/og-home.jpg`,
+  twitterCard: 'summary_large_image',
 })
 
 useHead({
+  link: [
+    { rel: 'canonical', href: `${siteUrl}${route.path}` },
+  ],
   script: [
     {
       type: 'application/ld+json',
-      textContent: JSON.stringify({
+      innerHTML: JSON.stringify({
         '@context': 'https://schema.org',
         '@type': 'WebSite',
-        name: copy.pageTitle,
+        name: 'aiseekertools',
         url: siteUrl,
         potentialAction: {
           '@type': 'SearchAction',
-          target: `${siteUrl}/?q={search_term_string}`,
+          target: `${siteUrl}/search?q={search_term_string}`,
           'query-input': 'required name=search_term_string',
         },
       }),
     },
     {
       type: 'application/ld+json',
-      textContent: JSON.stringify({
+      innerHTML: JSON.stringify({
         '@context': 'https://schema.org',
         '@type': 'ItemList',
-        itemListElement: topToolsForSchema.value.map((tool, index) => ({
+        itemListElement: topToolsForSchema.value.map((t, i) => ({
           '@type': 'ListItem',
-          position: index + 1,
-          name: tool.name,
-          url: tool.website || `${siteUrl}/tools/${tool.handle}`,
+          position: i + 1,
+          name: t.name,
+          url: t.website || `${siteUrl}/tool/${t.handle}`,
         })),
       }),
-    },
-  ],
-  link: [
-    {
-      rel: 'canonical',
-      href: `${siteUrl}${route.path}`,
     },
   ],
 })
