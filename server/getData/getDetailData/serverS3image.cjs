@@ -1,6 +1,9 @@
 const { PrismaClient } = require('@prisma/client');
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { HttpsProxyAgent } = require('https-proxy-agent');
 const axios = require('axios');
+const http = require('http');
+const https = require('https');
 
 const prisma = new PrismaClient();
 
@@ -13,11 +16,10 @@ const VULTR_CONFIG = {
     secretKey: "G70qWAVLW0CjlX4tuymQ4nxregQMfAr6tA16tzda"
 };
 
-// 🔥 新增：你的自定义域名配置
 const CUSTOM_DOMAIN = "https://img.aiseekertools.com";
 
-// 填写具体 handle 则只迁移这一个工具的图片，留空 '' 则迁移所有
-const TARGET_HANDLE = 'writesonic'; // 例如: 'chatgpt'
+// 代理配置：请确保你的代理软件（如 Clash/V2Ray）已开启并监听此端口
+const proxyAgent = new HttpsProxyAgent('http://127.0.0.1:7897');
 // ===============================================
 
 const s3Client = new S3Client({
@@ -29,25 +31,47 @@ const s3Client = new S3Client({
     },
 });
 
+function getTimeStr() {
+    return new Date().toLocaleString('zh-CN');
+}
+
 /**
- * 上传单个图片
+ * 上传图片 (增强版，支持代理和 Google 链接修复)
  */
 async function uploadImageToVultr(imageUrl, handle) {
     if (!imageUrl || !imageUrl.startsWith('http')) return null;
-    
-    // 🔥 修改去重判断：如果已经是你的自定义域名链接，则跳过
     if (imageUrl.includes('img.aiseekertools.com')) return null;
 
+    // 1. 尝试修复不安全的 Google 链接
+    let fetchUrl = imageUrl;
+    if (fetchUrl.includes('googleusercontent.com') && fetchUrl.startsWith('http://')) {
+        fetchUrl = fetchUrl.replace('http://', 'https://');
+    }
+
     try {
-        console.log(`🖼️  正在处理: ${handle}`);
-        
         const response = await axios({
-            url: imageUrl,
+            url: fetchUrl,
             method: 'GET',
             responseType: 'arraybuffer',
-            timeout: 15000,
+            timeout: 20000, 
+            maxRedirects: 5,
+            // 关键：同时为 http 和 https 配置代理 Agent
+            httpAgent: proxyAgent,
+            httpsAgent: proxyAgent,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Referer': 'https://www.google.com/',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+                'Upgrade-Insecure-Requests': '1',
+                'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
             }
         });
 
@@ -57,7 +81,6 @@ async function uploadImageToVultr(imageUrl, handle) {
         const safeHandle = handle.replace(/[^a-z0-9-_]/gi, '');
         const fileName = `images/${safeHandle}-${Date.now()}.${fileExt}`;
 
-        // 上传到 Vultr (这步不变，文件依然要传到 Vultr 桶里)
         const command = new PutObjectCommand({
             Bucket: VULTR_CONFIG.bucket,
             Key: fileName,
@@ -67,122 +90,89 @@ async function uploadImageToVultr(imageUrl, handle) {
         });
 
         await s3Client.send(command);
-        
-        // 🔥 核心修改：返回你的自定义域名链接 (不带桶名)
         return `${CUSTOM_DOMAIN}/${fileName}`;
         
     } catch (error) {
-        console.error(`❌ 失败 [${handle}]:`, error.message);
+        let errorMsg = error.message;
+        if (error.code === 'ECONNABORTED') errorMsg = '请求超时 (Timeout)';
+        console.log(`   ❌ 下载失败 [${handle}]: ${errorMsg} (Status: ${error.response?.status || 'N/A'})`);
         return null;
     }
 }
 
 /**
- * 辅助：更新单个工具的数据库记录
+ * 执行任务的主函数
  */
-async function updateSingleTool(tool) {
-    const newUrl = await uploadImageToVultr(tool.image, tool.handle);
-    
-    if (newUrl) {
-        try {
-            await prisma.aiTool.update({
-                where: { id: tool.id },
-                data: {
-                    image: newUrl,
-                    website_logo: newUrl
-                }
-            });
-            console.log(`✅ 迁移成功! 新链接: ${newUrl}`);
-            return true;
-        } catch (dbErr) {
-            console.error(`❌ 数据库更新失败: ${dbErr.message}`);
-            return false;
-        }
-    } else {
-        console.log(`⏭️ 跳过 (无需迁移或上传失败)`);
-        return false;
-    }
-}
+async function runJob() {
+    console.log(`\n=========================================`);
+    console.log(`🚀 [${getTimeStr()}] 开始任务`);
+    console.log(`=========================================`);
 
-async function main() {
-    console.log("🚀 开始图片迁移任务...");
+    const allTools = await prisma.aiTool.findMany({
+        select: { id: true, handle: true, image: true },
+        orderBy: { id: 'asc' }
+    });
 
-    // ==========================================
-    // 逻辑 1：如果指定了 TARGET_HANDLE，只迁移这一个
-    // ==========================================
-    if (TARGET_HANDLE) {
-        console.log(`🎯 【单工具模式】正在查找 handle: ${TARGET_HANDLE}`);
-        
-        const targetTool = await prisma.aiTool.findUnique({
-            where: { handle: TARGET_HANDLE },
-            select: { id: true, handle: true, image: true }
-        });
+    const totalCount = allTools.length;
+    const completedCount = allTools.filter(tool => tool.image && tool.image.includes('img.aiseekertools.com')).length;
+    const toolsToMigrate = allTools.filter(tool => tool.handle && tool.image && !tool.image.includes('img.aiseekertools.com'));
+    const pendingCount = toolsToMigrate.length;
 
-        if (!targetTool) {
-            return console.error(`❌ 数据库中未找到 handle 为 "${TARGET_HANDLE}" 的工具`);
-        }
+    console.log(`📊 数据统计：`);
+    console.log(`   • 数据库总量：${totalCount}`);
+    console.log(`   • 已完成迁移：${completedCount}`);
+    console.log(`   • 待处理数量：${pendingCount}`);
+    console.log(`-----------------------------------------`);
 
-        if (!targetTool.image) {
-            return console.error(`❌ 该工具没有图片链接`);
-        }
-
-        console.log(`✅ 找到工具: ${targetTool.handle}, 当前图片: ${targetTool.image}`);
-        
-        await updateSingleTool(targetTool);
-        
-        console.log("🎉 单工具任务结束");
+    if (pendingCount === 0) {
+        console.log(`✅ 所有图片都已处理完毕！`);
         return;
     }
 
-    // ==========================================
-    // 逻辑 2：如果没有指定，批量迁移所有
-    // ==========================================
-    console.log(`🎯 【批量模式】正在扫描数据库...`);
-
-    // 1. 找出所有需要迁移图片的工具
-    const toolsToMigrate = await prisma.aiTool.findMany({
-        where: {
-            AND: [
-                { handle: { not: null } },
-                { image: { not: null } },
-                // 🔥 修改过滤条件：排除已经是自定义域名的链接
-                { image: { notContains: 'img.aiseekertools.com' } }
-            ]
-        },
-        select: { id: true, handle: true, image: true },
-        orderBy: { id: 'asc' } // 按 ID 顺序处理
-    });
-
-    console.log(`📋 共找到 ${toolsToMigrate.length} 张图片待迁移`);
-
-    let successCount = 0;
+    console.log(`🔨 开始处理...`);
+    let processedCount = 0;
 
     for (const tool of toolsToMigrate) {
+        const progress = ((processedCount + 1) / pendingCount * 100).toFixed(1);
         const newUrl = await uploadImageToVultr(tool.image, tool.handle);
         
         if (newUrl) {
             try {
                 await prisma.aiTool.update({
                     where: { id: tool.id },
-                    data: {
-                        image: newUrl,
-                        website_logo: newUrl
-                    }
+                    data: { image: newUrl, website_logo: newUrl }
                 });
-                successCount++;
-                console.log(`✅ [${successCount}/${toolsToMigrate.length}] 更新成功: ${tool.handle}`);
-            } catch (dbErr) {
-                console.error(`❌ 数据库更新失败 [${tool.handle}]: ${dbErr.message}`);
+                processedCount++;
+                console.log(`✅ [${processedCount}/${pendingCount}] ${tool.handle} (${progress}%)`);
+            } catch (e) {
+                console.log(`❌ [${processedCount+1}/${pendingCount}] ${tool.handle} (DB更新失败)`);
             }
+        } else {
+            console.log(`⏭️ [${processedCount+1}/${pendingCount}] ${tool.handle} (跳过/下载失败)`);
         }
         
-        // 简单的节流，防止请求过快
+        // 稍微停顿一下，避免请求过快
         await new Promise(r => setTimeout(r, 200));
     }
 
-    console.log(`\n🎉 迁移结束。成功: ${successCount}/${toolsToMigrate.length}`);
+    console.log(`\n=========================================`);
+    console.log(`🎉 任务结束！`);
+    console.log(`   • 本次成功处理：${processedCount}`);
+    console.log(`=========================================`);
 }
 
-main()
-    .catch((e) => { console.error("🔥 致命错误:", e); process.exit(1); })
-    .finally(async () => { await prisma.$disconnect(); });
+// ================= [ 启动逻辑 ] =================
+
+async function main() {
+    try {
+        await runJob();
+        process.exit(0);
+    } catch (e) {
+        console.error("🔥 致命错误:", e);
+        process.exit(1);
+    } finally {
+        await prisma.$disconnect();
+    }
+}
+
+main();
