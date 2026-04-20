@@ -1,563 +1,362 @@
 <template>
-  <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-    <!-- Sticky header / hero -->
-    <header
-      class="sticky top-16 z-10 border-b border-slate-200 bg-white/90 pb-4 pt-3 backdrop-blur"
-    >
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div class="min-w-0">
-          <p class="text-xs uppercase tracking-wide text-slate-500">
-            {{ copy.categoryLabel }}
-          </p>
-          <h1 class="mt-1 line-clamp-2 text-2xl font-bold text-slate-900">
-            {{ category?.name }} {{ copy.h1Suffix }}
-          </h1>
-          <p
-            v-if="category"
-            class="mt-1 max-w-2xl text-sm text-slate-600"
-          >
-            {{ metaDescription }}
-          </p>
-        </div>
+  <div class="min-h-screen bg-[rgb(var(--bg))] text-[rgb(var(--text))]">
+    <TheHeader />
 
-        <!-- Above-the-fold inline ad (highest CTR) -->
-        <div class="mt-2 flex-shrink-0 sm:mt-0">
-          <AdPlaceholder
-            :label="copy.adInlineLabel"
-            size="banner"
-            class="w-full sm:w-[320px]"
-          />
-        </div>
-      </div>
-    </header>
+    <!-- ===== Section 2: Compact Hero ===== -->
+    <SubCategoryHero
+      v-if="category"
+      :category="category"
+      :parent="parent"
+      :active-filter="activeFilter"
+      @update:filter="activeFilter = $event"
+    />
 
-    <div class="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1.6fr)_minmax(260px,0.9fr)]">
-      <!-- Tool list + content -->
-      <section aria-labelledby="tool-list-heading">
-        <!-- Skeleton while loading -->
-        <div
-          v-if="pending && !category"
-          class="space-y-4"
-        >
-          <div
-            v-for="n in 6"
-            :key="n"
-            class="animate-pulse rounded-xl border border-slate-200 bg-white p-4"
-          >
-            <div class="flex items-start gap-3">
-              <div class="h-12 w-12 rounded-md bg-slate-200" />
-              <div class="flex-1 space-y-2">
-                <div class="h-4 w-1/2 rounded bg-slate-200" />
-                <div class="h-3 w-5/6 rounded bg-slate-100" />
-              </div>
-            </div>
-            <div class="mt-4 flex items-center justify-between">
-              <div class="h-3 w-32 rounded bg-slate-100" />
-              <div class="h-8 w-28 rounded-md bg-slate-200" />
-            </div>
+    <!-- ===== Main layout: list + sidebar ===== -->
+    <main class="mx-auto w-full max-w-7xl px-4 pb-16 sm:px-6 lg:px-8">
+      <div class="mt-8 grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <!-- ---------- LEFT: tool list ---------- -->
+        <section aria-labelledby="tool-list-heading">
+          <div class="mb-4 flex items-end justify-between">
+            <h2
+              id="tool-list-heading"
+              class="text-lg font-semibold tracking-tight text-ink-900 dark:text-white"
+            >
+              {{ category ? `Top ${pagination.total || displayedTools.length} tools` : 'Loading…' }}
+            </h2>
+            <p class="text-xs text-ink-400">
+              Sorted by {{ activeFilter === 'new' ? 'newest' : activeFilter === 'free' ? 'free first' : 'traffic' }}
+            </p>
           </div>
-        </div>
 
-        <!-- Tool list -->
-        <div
-          v-else
-          class="space-y-4"
-        >
-          <h2
-            id="tool-list-heading"
-            class="sr-only"
+          <!-- Skeleton (initial load) -->
+          <ToolListSkeleton v-if="pending && !category" :count="6" />
+
+          <!-- Empty -->
+          <div
+            v-else-if="!displayedTools.length"
+            class="flex min-h-[280px] flex-col items-center justify-center rounded-2xl border border-dashed border-ink-200 bg-white p-8 text-center dark:border-white/10 dark:bg-ink-800/40"
           >
-            {{ copy.toolListHeading }}
-          </h2>
-
-          <template
-            v-for="(item, index) in toolsWithAds"
-            :key="item.key"
-          >
-            <!-- Ad slots after 3rd, 10th, 20th cards -->
-            <AdPlaceholder
-              v-if="item.type === 'ad'"
-              :label="item.adLabel"
-              :size="item.adSize"
-            />
-
-            <!-- Tool card -->
-            <article
-              v-else
-              class="group rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-            >
-              <div class="flex items-start gap-3">
-                <img
-                  :src="item.tool.website_logo || fallbackLogo"
-                  :alt="`${item.tool.name} logo`"
-                  class="h-12 w-12 rounded-md border border-slate-200 object-cover"
-                  loading="lazy"
-                  decoding="async"
-                  :fetchpriority="index < 5 ? 'high' : 'auto'"
-                >
-                <div class="min-w-0 flex-1">
-                  <h3 class="line-clamp-1 text-base font-semibold text-slate-900">
-                    {{ item.tool.name }}
-                  </h3>
-                  <p class="mt-1 line-clamp-2 text-sm text-slate-600">
-                    {{ item.tool.description || copy.noDescription }}
-                  </p>
-                  <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <span v-if="item.tool.tool_info_review">
-                      ⭐ {{ item.tool.tool_info_review.toFixed(1) }}/5
-                    </span>
-                    <span>
-                      {{ copy.monthVisits }}: {{ formatVisits(item.tool.month_visited_count) }}
-                    </span>
-                    <span
-                      v-if="item.tool.is_free"
-                      class="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-600"
-                    >
-                      {{ copy.freeBadge }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <div class="flex flex-wrap gap-1 text-[11px] text-slate-500">
-                  <span
-                    v-for="badge in (item.tool.pricing || []).slice(0, 2)"
-                    :key="badge"
-                    class="rounded-full bg-slate-50 px-2 py-0.5"
-                  >
-                    {{ badge }}
-                  </span>
-                </div>
-                <a
-                  :href="item.tool.website || '#'"
-                  target="_blank"
-                  rel="noopener nofollow sponsored"
-                  class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white shadow-sm transition hover:bg-slate-700"
-                >
-                  {{ copy.visitCta }}
-                </a>
-              </div>
-            </article>
-          </template>
-        </div>
-
-        <!-- SEO content sections -->
-        <section
-          v-if="category"
-          class="mt-10 space-y-8 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-        >
-          <!-- Summary -->
-          <section
-            id="Summary"
-            aria-labelledby="summary-heading"
-          >
-            <h2
-              id="summary-heading"
-              class="text-lg font-semibold text-slate-900"
-            >
-              {{ copy.summaryTitle }} {{ category.name }}
-            </h2>
-            <p class="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-700">
-              <strong>{{ category.name }}</strong>
-              {{ ' ' }}
-              {{ category.what_is_summary }}
-              <span v-if="category.what_is_summary">
-                {{ ' ' }}
-                <strong>{{ category.name }}</strong>
-              </span>
+            <div class="flex h-12 w-12 items-center justify-center rounded-full bg-ink-100 text-ink-400 dark:bg-white/5">
+              <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="7"/>
+                <path stroke-linecap="round" d="M21 21l-4.3-4.3"/>
+              </svg>
+            </div>
+            <h3 class="mt-3 text-sm font-semibold text-ink-900 dark:text-white">
+              No tools match this filter yet
+            </h3>
+            <p class="mt-1 max-w-sm text-xs text-ink-500 dark:text-ink-400">
+              Try switching filters, or check related niches below for similar categories.
             </p>
-          </section>
+          </div>
 
-          <!-- Features -->
-          <section
-            id="Features"
-            aria-labelledby="features-heading"
+          <!-- Grid: 2-col on lg+ -->
+          <div
+            v-else
+            class="grid grid-cols-1 gap-4 lg:grid-cols-2"
           >
-            <h2
-              id="features-heading"
-              class="text-lg font-semibold text-slate-900"
+            <template v-for="(item, index) in displayedTools" :key="item.id">
+              <SubToolAdCard
+                v-if="item.isAd"
+                :slot-id="item.slotId"
+              />
+              <SubToolCard
+                v-else
+                :tool="item"
+                :priority="index < 3"
+                :rank="item.__rank"
+              />
+            </template>
+          </div>
+
+          <!-- Load more -->
+          <div v-if="showLoadMore" class="mt-8 flex justify-center">
+            <button
+              type="button"
+              :disabled="loadingMore"
+              class="btn-shine inline-flex items-center gap-2 rounded-full border border-ink-200 bg-white px-5 py-2.5 text-sm font-semibold text-ink-700 transition hover:border-primary/50 hover:text-primary-600 disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:text-ink-200 dark:hover:text-white"
+              @click="loadMore"
+              @mousemove="onMouseMove"
             >
-              {{ copy.featuresTitle }}
-            </h2>
-            <ul class="mt-2 grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
-              <li
-                v-for="feature in category.feature || []"
-                :key="feature"
-                class="flex items-start gap-2"
+              <svg
+                v-if="loadingMore"
+                viewBox="0 0 24 24"
+                class="h-4 w-4 animate-spin"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
               >
-                <span class="mt-1 h-1.5 w-1.5 rounded-full bg-slate-400" />
-                <span>{{ feature }}</span>
-              </li>
-            </ul>
-          </section>
-
-          <!-- User Groups -->
-          <section
-            id="User-Groups"
-            aria-labelledby="user-groups-heading"
-          >
-            <h2
-              id="user-groups-heading"
-              class="text-lg font-semibold text-slate-900"
-            >
-              {{ copy.userGroupsTitle }}
-            </h2>
-            <p class="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-700">
-              {{ category.who_is_use }}
-            </p>
-          </section>
-
-          <!-- Workflow -->
-          <section
-            id="Workflow"
-            aria-labelledby="workflow-heading"
-          >
-            <h2
-              id="workflow-heading"
-              class="text-lg font-semibold text-slate-900"
-            >
-              {{ copy.workflowTitle }}
-            </h2>
-            <p class="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-700">
-              {{ category.how_do_work }}
-            </p>
-          </section>
-
-          <!-- Pros & Cons -->
-          <section
-            id="Pros-Cons"
-            aria-labelledby="pros-cons-heading"
-          >
-            <h2
-              id="pros-cons-heading"
-              class="text-lg font-semibold text-slate-900"
-            >
-              {{ copy.prosConsTitle }}
-            </h2>
-            <div class="mt-3 grid gap-6 sm:grid-cols-2">
-              <div>
-                <h3 class="text-sm font-semibold text-emerald-700">
-                  {{ copy.prosTitle }}
-                </h3>
-                <p class="mt-2 whitespace-pre-line text-sm text-slate-700">
-                  {{ category.advantages }}
-                </p>
-              </div>
-              <div>
-                <h3 class="text-sm font-semibold text-rose-700">
-                  {{ copy.consTitle }}
-                </h3>
-                <ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
-                  <li
-                    v-for="tool in tools.slice(0, 3)"
-                    :key="tool.id"
-                  >
-                    {{ tool.name }} {{ copy.genericCon }}
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </section>
-
-          <!-- FAQ with details/summary -->
-          <section
-            v-if="faqs.length"
-            id="FAQ"
-            aria-labelledby="faq-heading"
-            class="border-t border-slate-200 pt-6"
-          >
-            <h2
-              id="faq-heading"
-              class="text-lg font-semibold text-slate-900"
-            >
-              {{ copy.faqTitle }}
-            </h2>
-            <div class="mt-3 space-y-3">
-              <details
-                v-for="faq in faqs"
-                :key="faq.question"
-                class="group rounded-lg border border-slate-200 bg-slate-50 p-3"
+                <path stroke-linecap="round" d="M12 2a10 10 0 0110 10"/>
+              </svg>
+              <span>{{ loadingMore ? 'Loading…' : `Load ${Math.min(pagination.pageSize, pagination.total - displayedTools.filter(t => !t.isAd).length)} more` }}</span>
+              <svg
+                v-if="!loadingMore"
+                viewBox="0 0 24 24"
+                class="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
               >
-                <summary class="cursor-pointer text-sm font-medium text-slate-900">
-                  {{ faq.question }}
-                </summary>
-                <p class="mt-2 text-sm leading-relaxed text-slate-700">
-                  {{ faq.answer }}
-                </p>
-              </details>
-            </div>
-          </section>
-        </section>
-      </section>
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/>
+              </svg>
+            </button>
+          </div>
 
-      <!-- Sidebar with sticky ad -->
-      <aside class="space-y-6">
-        <section
-          v-if="category"
-          class="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700"
-        >
-          <h2 class="text-sm font-semibold text-slate-900">
-            {{ copy.quickFactsTitle }}
-          </h2>
-          <dl class="mt-3 space-y-2">
-            <div class="flex items-center justify-between gap-2">
-              <dt class="text-slate-500">{{ copy.parentCategory }}</dt>
-              <dd class="font-medium text-slate-900">
-                {{ category.parent?.name || '—' }}
-              </dd>
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <dt class="text-slate-500">{{ copy.toolCount }}</dt>
-              <dd class="font-medium text-slate-900">
-                {{ tools.length }}
-              </dd>
-            </div>
-          </dl>
+          <!-- SEO long content -->
+          <div v-if="category" class="mt-12">
+            <SubCategoryContent :category="category" />
+          </div>
         </section>
 
-        <!-- Sticky sidebar ad -->
-        <div class="sticky bottom-6">
-          <AdPlaceholder
-            :label="copy.sidebarAdLabel"
-            size="sidebar"
-            class="mx-auto w-full max-w-[300px] min-h-[600px]"
+        <!-- ---------- RIGHT: sticky sidebar ---------- -->
+        <aside class="space-y-6 lg:sticky lg:top-24 lg:self-start">
+          <!-- Quick facts -->
+          <section
+            v-if="category"
+            class="rounded-2xl border border-ink-200 bg-white p-5 dark:border-white/5 dark:bg-ink-800/60"
+          >
+            <h2 class="text-sm font-semibold text-ink-900 dark:text-white">
+              Category snapshot
+            </h2>
+            <dl class="mt-4 space-y-3 text-sm">
+              <div class="flex items-center justify-between gap-2">
+                <dt class="text-ink-500 dark:text-ink-400">Parent</dt>
+                <dd class="font-medium text-ink-800 dark:text-white">
+                  <NuxtLink
+                    v-if="parent"
+                    :to="`/category/${parent.handle}`"
+                    class="truncate transition hover:text-primary-600 dark:hover:text-accent"
+                  >
+                    {{ parent.name }}
+                  </NuxtLink>
+                  <span v-else>—</span>
+                </dd>
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <dt class="text-ink-500 dark:text-ink-400">Tools listed</dt>
+                <dd class="font-semibold text-ink-800 dark:text-white">
+                  {{ pagination.total || 0 }}
+                </dd>
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <dt class="text-ink-500 dark:text-ink-400">Updated</dt>
+                <dd class="font-medium text-ink-800 dark:text-white">
+                  {{ updatedLabel }}
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          <!-- Related niches -->
+          <RelatedNiches :items="relatedNiches" :parent="parent" />
+
+          <!-- Sticky sidebar ad -->
+          <AdSlot
+            variant="sidebar"
+            label="Sponsored · Sidebar"
+            slot-id="sub-cat-sidebar"
+            class="min-h-[600px]"
           />
-        </div>
-      </aside>
-    </div>
-  </main>
+        </aside>
+      </div>
+    </main>
+
+    <TheFooter />
+  </div>
 </template>
 
-<script setup lang="ts">
-import AdPlaceholder from '../components/AdPlaceholder.vue'
-
-type FaqItem = {
-  question: string
-  answer: string
-}
-
-type CategoryDetail = {
-  id: number
-  name: string
-  handle: string
-  what_is_summary: string | null
-  feature: string[] | null
-  who_is_use: string | null
-  how_do_work: string | null
-  advantages: string | null
-  faq: any[]
-  parent?: {
-    id: number
-    name: string
-    handle: string
-  } | null
-}
-
-type ToolItem = {
-  id: number
-  handle: string
-  name: string
-  description: string | null
-  website: string | null
-  website_logo: string | null
-  month_visited_count: number
-  is_free: boolean
-  tool_info_review: number | null
-  pricing: string[] | null
-  pros: string[]
-  cons: string[]
-}
-
-type ApiResult = {
-  category: CategoryDetail
-  tools: ToolItem[]
-}
-
-const copy = {
-  categoryLabel: 'AI Category',
-  h1Suffix: 'Tools & Software',
-  adInlineLabel: 'Sponsored – Top Placement',
-  toolListHeading: 'Top AI tools in this category',
-  noDescription: 'No description provided yet.',
-  visitCta: 'Visit Website',
-  freeBadge: 'Free',
-  monthVisits: 'Monthly visits',
-  summaryTitle: 'What is',
-  featuresTitle: 'Key features',
-  userGroupsTitle: 'Who uses these tools',
-  workflowTitle: 'How it works in your workflow',
-  prosConsTitle: 'Pros & cons of this AI category',
-  prosTitle: 'Benefits',
-  consTitle: 'Limitations',
-  genericCon: 'may not be a fit for every workflow.',
-  faqTitle: 'Frequently asked questions',
-  quickFactsTitle: 'Category snapshot',
-  parentCategory: 'Parent category',
-  toolCount: 'Tools listed',
-  sidebarAdLabel: 'Sponsored – Sticky',
-}
+<script setup>
+import { ref, computed, watch } from 'vue'
+import TheHeader from '../components/TheHeader.vue'
+import TheFooter from '../components/TheFooter.vue'
+import AdSlot from '../components/AdSlot.vue'
+import SubCategoryHero from '../components/category/SubCategoryHero.vue'
+import SubToolCard from '../components/category/SubToolCard.vue'
+import SubToolAdCard from '../components/category/SubToolAdCard.vue'
+import ToolListSkeleton from '../components/category/ToolListSkeleton.vue'
+import RelatedNiches from '../components/category/RelatedNiches.vue'
+import SubCategoryContent from '../components/category/SubCategoryContent.vue'
 
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
-const siteUrl = runtimeConfig.public?.siteUrl || 'https://example.com'
+const siteUrl = runtimeConfig.public?.siteUrl || 'https://aiseekertools.com'
 
 const slug = computed(() => String(route.params.slug || ''))
+const activeFilter = ref('popular')
 
-const {
-  data,
-  pending,
-} = await useAsyncData<ApiResult>(
-  () => `category-detail-${slug.value}`,
+// ---------- SSR data fetch ----------
+const { data, pending } = await useAsyncData(
+  () => `sub-category-${slug.value}`,
   () => $fetch(`/api/categories/${slug.value}`),
+  { watch: [slug] },
 )
-console.log(data.value,11111111)
+
 const category = computed(() => data.value?.category || null)
-const tools = computed(() => data.value?.tools || [])
+const parent = computed(() => category.value?.parent || null)
+const relatedNiches = computed(() => data.value?.relatedNiches || [])
+const pagination = computed(
+  () => data.value?.pagination || { page: 1, pageSize: 30, total: 0, totalPages: 1, hasMore: false },
+)
 
-const toolsWithAds = computed(() => {
-  const result: Array<
-    | { key: string; type: 'tool'; tool: ToolItem }
-    | { key: string; type: 'ad'; adLabel: string; adSize: 'banner' | 'feed' }
-  > = []
+// Tools coming back from first SSR fetch (already has ads injected at pos 3 & 10)
+const ssrTools = computed(() => data.value?.tools || [])
 
-  const adPositions = new Map([
-    [3, { adLabel: 'Sponsored – Recommended tool', adSize: 'feed' as const }],
-    [10, { adLabel: 'Sponsored – Mid-page banner', adSize: 'banner' as const }],
-    [20, { adLabel: 'Sponsored – Long-read placement', adSize: 'feed' as const }],
-  ])
+// Appended tools via "Load More"
+const appendedTools = ref([])
+const loadingMore = ref(false)
 
-  tools.value.forEach((tool, index) => {
-    const position = index + 1
-    result.push({ key: `tool-${tool.id}`, type: 'tool', tool })
-
-    const adConfig = adPositions.get(position)
-    if (adConfig) {
-      result.push({
-        key: `ad-${position}`,
-        type: 'ad',
-        adLabel: adConfig.adLabel,
-        adSize: adConfig.adSize,
-      })
-    }
-  })
-
-  return result
+// 切换 slug 时清空 appended
+watch(slug, () => {
+  appendedTools.value = []
+  activeFilter.value = 'popular'
 })
 
-const faqs = computed<FaqItem[]>(() => {
-  const raw = category.value?.faq || []
-  if (!Array.isArray(raw)) {
-    return []
-  }
-  return raw
-    .map((item: any) => {
-      if (!item) return null
-      const question = item.title || item.question || ''
-      const answer = item.desc || item.answer || ''
-      if (!question || !answer) return null
-      return {
-        question: String(question),
-        answer: String(answer),
-      }
+// Client-side filter (filter 只影响展示顺序/过滤，不发新请求 —— 因为首页已经 sort by traffic)
+const displayedTools = computed(() => {
+  const merged = [...ssrTools.value, ...appendedTools.value]
+  let idx = 0
+  return merged
+    .filter((t) => {
+      if (t.isAd) return true
+      if (activeFilter.value === 'free') return t.isFree
+      return true
     })
-    .filter(Boolean) as FaqItem[]
+    .map((t) => {
+      if (t.isAd) return t
+      idx += 1
+      return { ...t, __rank: idx }
+    })
 })
 
-const fallbackLogo = '/favicon.ico'
+const realToolsLoaded = computed(
+  () => ssrTools.value.filter((t) => !t.isAd).length + appendedTools.value.filter((t) => !t.isAd).length,
+)
 
-const formatVisits = (value: number) =>
-  new Intl.NumberFormat().format(value || 0)
+const showLoadMore = computed(
+  () => !pending.value && pagination.value.total > realToolsLoaded.value,
+)
 
-const metaDescription = computed(() => {
-  if (!category.value) return ''
-  if (category.value.what_is_summary) {
-    return `${category.value.name} – ${category.value.what_is_summary.slice(0, 150)}`
+const loadMore = async () => {
+  if (loadingMore.value) return
+  loadingMore.value = true
+  try {
+    const nextPage = Math.floor(realToolsLoaded.value / pagination.value.pageSize) + 1
+    const res = await $fetch(`/api/categories/${slug.value}`, {
+      query: { page: nextPage, pageSize: pagination.value.pageSize },
+    })
+    appendedTools.value.push(...(res?.tools || []))
+  } catch (e) {
+    // silent fail — keep current state
+  } finally {
+    loadingMore.value = false
   }
-  return `Best ${category.value.name} AI tools and software compared by traffic and features.`
+}
+
+const onMouseMove = (e) => {
+  const target = e.currentTarget
+  const rect = target.getBoundingClientRect()
+  target.style.setProperty('--mx', `${e.clientX - rect.left}px`)
+  target.style.setProperty('--my', `${e.clientY - rect.top}px`)
+}
+
+const updatedLabel = computed(() => {
+  const d = new Date()
+  return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 })
 
-useSeoMeta({
-  title: computed(
-    () => `${category.value?.name || 'AI Category'} tools & software directory`,
-  ),
-  description: metaDescription,
-  ogTitle: computed(
-    () => `${category.value?.name || 'AI Category'} tools & software directory`,
-  ),
-  ogDescription: metaDescription,
+// ---------- SEO: dynamic meta + JSON-LD ----------
+const seoTitle = computed(() => {
+  const c = category.value
+  const count = pagination.value.total || 0
+  if (!c) return 'AI Tools Directory · aiseekertools'
+  return `Top ${count} Best ${c.name} AI Tools (${updatedLabel.value})`
+})
+
+const seoDescription = computed(() => {
+  const c = category.value
+  if (!c) return ''
+  const topNames = ssrTools.value.filter((t) => !t.isAd).slice(0, 3).map((t) => t.name)
+  if (topNames.length) {
+    return `Discover the best ${c.name} AI tools in ${updatedLabel.value}. Including ${topNames.join(', ')} and ${pagination.value.total - topNames.length}+ more — compared by traffic, rating, and pricing.`
+  }
+  if (c.what_is_summary) {
+    return `${c.name} AI tools — ${String(c.what_is_summary).slice(0, 160)}`
+  }
+  return `Best ${c.name} AI tools and software compared by traffic, features, and pricing.`
+})
+
+useServerSeoMeta({
+  title: seoTitle,
+  description: seoDescription,
+  ogTitle: seoTitle,
+  ogDescription: seoDescription,
+  ogType: 'website',
+  ogImage: `${siteUrl}/og-category.jpg`,
+  twitterCard: 'summary_large_image',
 })
 
 useHead(() => {
-  const firstTools = tools.value.slice(0, 10)
+  const realTools = ssrTools.value.filter((t) => !t.isAd)
 
-  const faqSchema = faqs.value.length
-    ? {
-        '@context': 'https://schema.org',
-        '@type': 'FAQPage',
-        mainEntity: faqs.value.map((faq) => ({
-          '@type': 'Question',
-          name: faq.question,
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: faq.answer,
-          },
-        })),
-      }
-    : null
+  const breadcrumb = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: siteUrl },
+      parent.value && {
+        '@type': 'ListItem',
+        position: 2,
+        name: parent.value.name,
+        item: `${siteUrl}/category/${parent.value.handle}`,
+      },
+      category.value && {
+        '@type': 'ListItem',
+        position: parent.value ? 3 : 2,
+        name: category.value.name,
+        item: `${siteUrl}/category/${category.value.handle}`,
+      },
+    ].filter(Boolean),
+  }
 
-  const softwareListSchema = firstTools.length
+  const itemList = realTools.length
     ? {
         '@context': 'https://schema.org',
         '@type': 'ItemList',
-        itemListElement: firstTools.map((tool, index) => ({
+        name: category.value?.name,
+        itemListElement: realTools.slice(0, 10).map((t, i) => ({
           '@type': 'SoftwareApplication',
-          position: index + 1,
-          name: tool.name,
-          url: tool.website || `${siteUrl}/tool/${tool.handle}`,
+          position: i + 1,
+          name: t.name,
+          url: t.website || `${siteUrl}/tool/${t.handle}`,
           applicationCategory: category.value?.name,
-          aggregateRating: tool.tool_info_review
-            ? {
-                '@type': 'AggregateRating',
-                ratingValue: tool.tool_info_review,
-              }
+          aggregateRating: t.rating
+            ? { '@type': 'AggregateRating', ratingValue: t.rating, bestRating: 5, reviewCount: 1 }
             : undefined,
-          offers: tool.pricing && tool.pricing.length
-            ? {
-                '@type': 'Offer',
-                price: '0',
-                priceCurrency: 'USD',
-              }
-            : undefined,
+          offers: t.isFree ? { '@type': 'Offer', price: '0', priceCurrency: 'USD' } : undefined,
         })),
       }
     : null
 
-  const scripts: any[] = []
+  const faqLd = category.value?.faq && category.value.faq.length
+    ? {
+        '@context': 'https://schema.org',
+        '@type': 'FAQPage',
+        mainEntity: category.value.faq.map((f) => ({
+          '@type': 'Question',
+          name: f.question,
+          acceptedAnswer: { '@type': 'Answer', text: f.answer },
+        })),
+      }
+    : null
 
-  if (faqSchema) {
-    scripts.push({
-      type: 'application/ld+json',
-      textContent: JSON.stringify(faqSchema),
-    })
-  }
-
-  if (softwareListSchema) {
-    scripts.push({
-      type: 'application/ld+json',
-      textContent: JSON.stringify(softwareListSchema),
-    })
-  }
+  const scripts = []
+  scripts.push({ type: 'application/ld+json', innerHTML: JSON.stringify(breadcrumb) })
+  if (itemList) scripts.push({ type: 'application/ld+json', innerHTML: JSON.stringify(itemList) })
+  if (faqLd) scripts.push({ type: 'application/ld+json', innerHTML: JSON.stringify(faqLd) })
 
   return {
     script: scripts,
-    link: [
-      {
-        rel: 'canonical',
-        href: `${siteUrl}${route.path}`,
-      },
-    ],
+    link: [{ rel: 'canonical', href: `${siteUrl}${route.path}` }],
   }
 })
 </script>
-
