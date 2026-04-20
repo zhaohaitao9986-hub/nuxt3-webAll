@@ -181,7 +181,7 @@ const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
 const siteUrl = runtimeConfig.public?.siteUrl || 'https://aiseekertools.com'
 
-const slug = computed(() => String(route.params.slug || ''))
+const slug = computed(() => String(route.params.slug[1] || ''))
 const activeFilter = ref('popular')
 
 // ---------- SSR data fetch ----------

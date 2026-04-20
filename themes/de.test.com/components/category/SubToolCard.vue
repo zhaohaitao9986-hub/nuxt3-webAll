@@ -124,7 +124,7 @@
     <div class="relative z-10 mt-auto flex items-center justify-between gap-3 border-t border-ink-100 px-5 py-3 dark:border-white/5">
       <div class="flex min-w-0 flex-wrap items-center gap-1">
         <span
-          v-for="tag in displayTags"
+          v-for="tag in tool.tags"
           :key="tag"
           class="inline-flex items-center rounded-md bg-ink-100 px-1.5 py-0.5 text-[10px] font-medium text-ink-600 dark:bg-white/5 dark:text-ink-300"
         >
@@ -170,21 +170,7 @@ const gradient = computed(() =>
   gradientByKey(props.tool.handle || props.tool.id || props.tool.name),
 )
 
-const displayTags = computed(() => {
-  const result = []
-  const pricing = props.tool.pricing || []
-  if (props.tool.isFree) result.push('Free')
-  pricing
-    .filter((p) => !/^free$/i.test(p))
-    .slice(0, 2)
-    .forEach((p) => result.push(p))
-  ;(props.tool.tags || [])
-    .slice(0, 2 - Math.min(2, result.length - (props.tool.isFree ? 1 : 0)))
-    .forEach((t) => {
-      if (result.length < 3) result.push(t)
-    })
-  return result.slice(0, 3)
-})
+
 
 const pricingStyle = computed(() => {
   const pricing = props.tool.pricing || []

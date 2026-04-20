@@ -106,7 +106,6 @@ export default defineEventHandler(async (event) => {
       },
     }),
   ])
-
   // ---------- 5. 工具数据整形 + 原生广告混入 ----------
   const tools = toolsRaw.map((t) => ({
     id: t.id,
@@ -122,7 +121,7 @@ export default defineEventHandler(async (event) => {
     website: t.website || null,
     isAd: false,
   }))
-
+console.log(toolsRaw,'33333')
   // 混入广告占位。仅在第 1 页注入，且当工具数足够时才插入（避免空列表全是广告）
   const toolsWithAds = []
   if (page === 1) {
