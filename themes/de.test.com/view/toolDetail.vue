@@ -50,6 +50,9 @@
           <!-- Pricing (rich text array) -->
           <ToolPricing :pricing="tool.pricing" />
 
+          <!-- Company info (rich text HTML → structured definition list) -->
+          <ToolCompanyInfo :company-info="tool.companyInfo" />
+
           <!-- ===== Section 5: Native Ad (between content and related) ===== -->
           <AdSlot
             variant="banner"
@@ -94,6 +97,7 @@ import ToolFeatures from '../components/tool/ToolFeatures.vue'
 import ToolProsCons from '../components/tool/ToolProsCons.vue'
 import ToolScreenshots from '../components/tool/ToolScreenshots.vue'
 import ToolPricing from '../components/tool/ToolPricing.vue'
+import ToolCompanyInfo from '../components/tool/ToolCompanyInfo.vue'
 import ToolFaq from '../components/tool/ToolFaq.vue'
 import RelatedTools from '../components/tool/RelatedTools.vue'
 import SimilarCategories from '../components/tool/SimilarCategories.vue'
