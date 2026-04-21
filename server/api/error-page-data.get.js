@@ -20,7 +20,7 @@ const TOOL_SELECT = {
 
 const QUICK_LINKS = [
   { label: 'Home', to: '/', variant: 'primary', icon: 'home' },
-  { label: 'All Categories', to: '/category', variant: 'ghost', icon: 'grid' },
+  { label: 'All Categories', to: '/ai-tools', variant: 'ghost', icon: 'grid' },
   { label: 'AI Writing', to: '/search?q=AI%20Writing', variant: 'ghost', icon: 'edit' },
   { label: 'AI Video', to: '/search?q=AI%20Video', variant: 'ghost', icon: 'video' },
 ]

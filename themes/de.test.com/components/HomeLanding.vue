@@ -26,7 +26,7 @@
             </h2>
           </div>
           <NuxtLink
-            to="/category"
+            to="/ai-tools"
             class="group hidden items-center gap-1 text-sm font-medium text-primary-600 transition hover:text-primary-500 dark:text-accent dark:hover:text-accent-400 sm:inline-flex"
           >
             View all

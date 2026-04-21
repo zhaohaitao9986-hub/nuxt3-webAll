@@ -53,7 +53,7 @@
           </div>
         </div>
         <NuxtLink
-          to="/category"
+          to="/ai-tools"
           class="inline-flex items-center gap-1 text-xs font-semibold text-primary-600 transition hover:text-primary-700 dark:text-accent dark:hover:text-white"
         >
           All categories

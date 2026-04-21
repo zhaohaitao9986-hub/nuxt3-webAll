@@ -80,7 +80,7 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useColorMode } from '~/composables/useColorMode'
 
 const nav = [
-  { label: 'Categories', href: '/category' },
+  { label: 'Categories', href: '/ai-tools' },
   { label: 'Submit Tool', href: '/submit' },
   { label: 'Blog', href: '/blog' },
 ]

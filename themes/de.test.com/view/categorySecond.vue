@@ -183,7 +183,7 @@ const siteUrl = runtimeConfig.public?.siteUrl || 'https://aiseekertools.com'
 
 const slug = computed(() => String(route.params.slug[1] || ''))
 const activeFilter = ref('popular')
-
+console.log(slug.value,'11111')
 // ---------- SSR data fetch ----------
 const { data, pending } = await useAsyncData(
   () => `sub-category-${slug.value}`,

@@ -12,7 +12,7 @@
         </h2>
       </div>
       <NuxtLink
-        to="/category"
+        to="/ai-tools"
         class="hidden items-center gap-1 text-xs font-semibold text-primary-600 transition hover:text-primary-700 sm:inline-flex dark:text-accent dark:hover:text-white"
       >
         View all

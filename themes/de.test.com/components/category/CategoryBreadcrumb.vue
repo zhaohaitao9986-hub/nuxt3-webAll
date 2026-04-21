@@ -21,7 +21,7 @@
     </NuxtLink>
     <NuxtLink
       v-else
-      to="/category"
+      to="/ai-tools"
       class="transition hover:text-primary-600 dark:hover:text-white"
     >
       Categories
