@@ -124,7 +124,7 @@
                 <dd class="font-medium text-ink-800 dark:text-white">
                   <NuxtLink
                     v-if="parent"
-                    :to="`/category/${parent.handle}`"
+                    :to="`/${parent.handle}`"
                     class="truncate transition hover:text-primary-600 dark:hover:text-accent"
                   >
                     {{ parent.name }}
@@ -307,13 +307,15 @@ useHead(() => {
         '@type': 'ListItem',
         position: 2,
         name: parent.value.name,
-        item: `${siteUrl}/category/${parent.value.handle}`,
+        item: `${siteUrl}/${parent.value.handle}`,
       },
       category.value && {
         '@type': 'ListItem',
         position: parent.value ? 3 : 2,
         name: category.value.name,
-        item: `${siteUrl}/category/${category.value.handle}`,
+        item: parent.value
+          ? `${siteUrl}/${parent.value.handle}/${category.value.handle}`
+          : `${siteUrl}/${category.value.handle}`,
       },
     ].filter(Boolean),
   }
@@ -327,7 +329,7 @@ useHead(() => {
           '@type': 'SoftwareApplication',
           position: i + 1,
           name: t.name,
-          url: t.website || `${siteUrl}/tool/${t.handle}`,
+          url: t.website || `${siteUrl}/tools/${t.handle}`,
           applicationCategory: category.value?.name,
           aggregateRating: t.rating
             ? { '@type': 'AggregateRating', ratingValue: t.rating, bestRating: 5, reviewCount: 1 }

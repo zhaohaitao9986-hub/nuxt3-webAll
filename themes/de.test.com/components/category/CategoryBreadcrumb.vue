@@ -14,7 +14,7 @@
 
     <NuxtLink
       v-if="parent"
-      :to="`/category/${parent.handle}`"
+      :to="`/${parent.handle}`"
       class="truncate max-w-[180px] transition hover:text-primary-600 dark:hover:text-white"
     >
       {{ parent.name }}

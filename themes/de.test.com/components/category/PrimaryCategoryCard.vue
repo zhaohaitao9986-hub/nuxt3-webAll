@@ -28,7 +28,7 @@
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2">
           <NuxtLink
-            :to="`/category/${category.handle}`"
+            :to="`/${category.handle}`"
             class="min-w-0 truncate text-base font-semibold text-ink-900 transition-colors group-hover:text-primary-600 dark:text-white dark:group-hover:text-accent"
           >
             {{ category.name }}
@@ -57,7 +57,7 @@
       <NuxtLink
         v-for="sub in category.topSubs"
         :key="sub.handle"
-        :to="`/category/${sub.handle}`"
+        :to="`/${category.handle}/${sub.handle}`"
         class="inline-flex items-center gap-1 rounded-full border border-ink-200 bg-ink-50 px-2.5 py-1 text-[11px] font-medium text-ink-700 transition hover:border-primary/50 hover:bg-white hover:text-primary-600 dark:border-white/10 dark:bg-white/5 dark:text-ink-200 dark:hover:border-primary/60 dark:hover:bg-white/10 dark:hover:text-white"
       >
         <span class="truncate max-w-[140px]">{{ sub.name }}</span>
@@ -73,7 +73,7 @@
     <!-- Footer CTA -->
     <div class="relative z-10 mt-auto border-t border-ink-100 px-5 py-3 dark:border-white/5">
       <NuxtLink
-        :to="`/category/${category.handle}`"
+        :to="`/${category.handle}`"
         class="inline-flex items-center gap-1 text-xs font-semibold text-primary-600 transition hover:gap-2 dark:text-accent"
       >
         View all {{ category.subCount }} sub-categories

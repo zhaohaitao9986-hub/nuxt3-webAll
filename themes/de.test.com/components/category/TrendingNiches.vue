@@ -21,7 +21,7 @@
       <NuxtLink
         v-for="(item, i) in items"
         :key="item.handle"
-        :to="`/category/${item.handle}`"
+        :to="l2UrlFor(item)"
         :class="[
           'group relative flex flex-col justify-between overflow-hidden rounded-2xl border transition-all duration-300 ease-smooth',
           'border-ink-200 bg-white hover:-translate-y-1 hover:shadow-card-hover',
@@ -83,12 +83,15 @@
 
 <script setup>
 import { useCategoryIcon } from '~/composables/useCategoryIcon'
+import { useAppRoutes } from '~/composables/useAppRoutes'
 
 defineProps({
   items: { type: Array, default: () => [] },
 })
 
 const { resolve } = useCategoryIcon()
+const { l2Url } = useAppRoutes()
+const l2UrlFor = (item) => l2Url(item?.parentHandle || '', item?.handle)
 
 const gradients = [
   'linear-gradient(135deg, #7C5CFF 0%, #22D3EE 100%)',

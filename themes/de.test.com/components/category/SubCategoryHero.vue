@@ -41,7 +41,7 @@
             </span>
             <NuxtLink
               v-if="parent"
-              :to="`/category/${parent.handle}`"
+              :to="`/${parent.handle}`"
               class="inline-flex items-center gap-1 rounded-full border border-ink-200 bg-white px-2.5 py-1 text-[11px] font-medium text-ink-600 transition hover:border-primary/50 hover:text-primary-600 dark:border-white/10 dark:bg-white/5 dark:text-ink-300 dark:hover:text-white"
             >
               in {{ parent.name }}

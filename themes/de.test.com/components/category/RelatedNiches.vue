@@ -19,7 +19,7 @@
       </div>
       <NuxtLink
         v-if="parent"
-        :to="`/category/${parent.handle}`"
+        :to="`/${parent.handle}`"
         class="hidden flex-shrink-0 rounded-full border border-ink-200 px-3 py-1 text-[11px] font-medium text-ink-600 transition hover:border-primary/50 hover:text-primary-600 sm:inline-flex dark:border-white/10 dark:text-ink-300 dark:hover:text-white"
       >
         All in {{ parent.name }}
@@ -29,7 +29,7 @@
     <ul class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
       <li v-for="item in items" :key="item.handle">
         <NuxtLink
-          :to="`/category/${item.handle}`"
+          :to="l2UrlFor(item)"
           class="group flex items-center gap-3 rounded-xl border border-transparent bg-ink-50 px-3 py-2.5 transition hover:-translate-y-0.5 hover:border-primary/30 hover:bg-white hover:shadow-sm dark:bg-white/5 dark:hover:border-primary/40 dark:hover:bg-white/10"
         >
           <span
@@ -58,14 +58,21 @@
 <script setup>
 import { useCategoryIcon } from '~/composables/useCategoryIcon'
 import { useGradientPalette } from '~/composables/useGradientPalette'
+import { useAppRoutes } from '~/composables/useAppRoutes'
 
-defineProps({
+const props = defineProps({
   items: { type: Array, default: () => [] },
   parent: { type: Object, default: null },
 })
 
 const { resolve } = useCategoryIcon()
 const { gradientByKey } = useGradientPalette()
+const { l2Url } = useAppRoutes()
+
+// 优先使用 item.parentHandle（API 已下发），兜底使用上级 parent prop
+const l2UrlFor = (item) =>
+  l2Url(item?.parentHandle || props.parent?.handle || '', item?.handle)
+
 const icon = (h) => {
   // 用更小尺寸 SVG 显示
   const raw = resolve(h)

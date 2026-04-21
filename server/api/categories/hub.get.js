@@ -88,6 +88,7 @@ export default defineCachedEventHandler(
           id: true,
           name: true,
           handle: true,
+          level1: { select: { handle: true } },
         },
       }),
     ])
@@ -132,6 +133,7 @@ export default defineCachedEventHandler(
       id: t.id,
       name: t.name,
       handle: t.handle,
+      parentHandle: t.level1?.handle || '',
     }))
 
     // SEO 富文本 (关键词堆叠，便于 Google 抓)

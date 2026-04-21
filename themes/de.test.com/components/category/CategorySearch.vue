@@ -53,7 +53,7 @@
           <NuxtLink
             v-for="(item, i) in filtered"
             :key="item.handle"
-            :to="`/category/${item.handle}`"
+            :to="l2UrlFor(item)"
             :class="[
               'flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition',
               i === activeIndex
@@ -84,6 +84,10 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useCategoryIcon } from '~/composables/useCategoryIcon'
+import { useAppRoutes } from '~/composables/useAppRoutes'
+
+const { l2Url } = useAppRoutes()
+const l2UrlFor = (item) => l2Url(item?.parentHandle || '', item?.handle)
 
 const props = defineProps({
   // [{ id, name, handle, toolCount }] — 全量二级分类索引
@@ -150,7 +154,7 @@ const onEnter = () => {
   const target = filtered.value[activeIndex.value]
   if (target) {
     open.value = false
-    navigateTo(`/category/${target.handle}`)
+    navigateTo(l2UrlFor(target))
   } else if (keyword.value.trim()) {
     navigateTo({ path: '/search', query: { q: keyword.value.trim() } })
   }

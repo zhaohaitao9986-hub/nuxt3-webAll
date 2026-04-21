@@ -140,7 +140,7 @@ const props = defineProps({
   sponsored: { type: Boolean, default: false },
 })
 
-const toolHref = computed(() => `/tool/${props.tool.handle}`)
+const toolHref = computed(() => `/tools/${props.tool.handle}`)
 
 const initial = computed(() => (props.tool.name || 'A').trim().charAt(0).toUpperCase())
 

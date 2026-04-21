@@ -117,7 +117,7 @@
             <NuxtLink
               v-for="s in suggestions"
               :key="s.handle"
-              :to="`/tool/${s.handle}`"
+              :to="`/tools/${s.handle}`"
               class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-ink-700 transition hover:bg-ink-100 dark:text-ink-100 dark:hover:bg-white/5"
               @mousedown.prevent
             >
@@ -145,7 +145,7 @@
         <NuxtLink
           v-for="tag in tags"
           :key="tag.handle"
-          :to="`/category/${tag.handle}`"
+          :to="l2UrlFor(tag)"
           class="inline-flex items-center gap-1 rounded-full border border-ink-200 bg-white px-3 py-1 text-xs font-medium text-ink-700 transition hover:-translate-y-0.5 hover:border-primary/60 hover:text-primary-600 dark:border-white/10 dark:bg-white/5 dark:text-ink-200 dark:hover:border-primary/60 dark:hover:text-white"
         >
           <span class="text-accent">#</span>
@@ -163,6 +163,7 @@
 
 <script setup>
 import { ref } from 'vue'
+import { useAppRoutes } from '~/composables/useAppRoutes'
 
 const props = defineProps({
   tags: {
@@ -176,6 +177,10 @@ const props = defineProps({
     ],
   },
 })
+
+// 热搜 tag 无 parentHandle 时，降级到 /search?q=xxx（避免 404）
+const { l2Url } = useAppRoutes()
+const l2UrlFor = (tag) => l2Url(tag?.parentHandle || '', tag?.handle)
 
 const emit = defineEmits(['search', 'suggest'])
 

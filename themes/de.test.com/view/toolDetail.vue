@@ -174,7 +174,7 @@ const seoDescription = computed(() => {
   return `Review, features and pricing for ${t.name}${tagLine}. Try this AI tool today.`
 })
 
-const canonicalPath = computed(() => `/tool/${slug.value}`)
+const canonicalPath = computed(() => `/tools/${slug.value}`)
 
 useServerSeoMeta({
   title: seoTitle,
@@ -199,19 +199,21 @@ useHead(() => {
         '@type': 'ListItem',
         position: 2,
         name: t.parentCategory.name,
-        item: `${siteUrl}/category/${t.parentCategory.handle}`,
+        item: `${siteUrl}/${t.parentCategory.handle}`,
       },
       t.categories?.[0] && {
         '@type': 'ListItem',
         position: t.parentCategory ? 3 : 2,
         name: t.categories[0].name,
-        item: `${siteUrl}/category/${t.categories[0].handle}`,
+        item: t.parentCategory
+          ? `${siteUrl}/${t.parentCategory.handle}/${t.categories[0].handle}`
+          : `${siteUrl}/${t.categories[0].handle}`,
       },
       {
         '@type': 'ListItem',
         position: t.parentCategory ? 4 : 3,
         name: t.name,
-        item: `${siteUrl}/tool/${t.handle}`,
+        item: `${siteUrl}/tools/${t.handle}`,
       },
     ].filter(Boolean),
   }
@@ -224,7 +226,7 @@ useHead(() => {
     operatingSystem: t.websiteType?.join(', ') || 'Web',
     description: t.shortDesc,
     image: t.logoUrl || undefined,
-    url: t.website || `${siteUrl}/tool/${t.handle}`,
+    url: t.website || `${siteUrl}/tools/${t.handle}`,
     aggregateRating: t.rating
       ? { '@type': 'AggregateRating', ratingValue: t.rating, bestRating: 5, reviewCount: 1 }
       : undefined,

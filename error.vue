@@ -225,7 +225,7 @@
             <NuxtLink
               v-for="(cat, i) in categories"
               :key="cat.id"
-              :to="`/category/${cat.handle}`"
+              :to="l2UrlFor(cat)"
               class="group inline-flex flex-shrink-0 items-center gap-2 rounded-xl border border-ink-200 bg-gradient-to-br from-ink-50/60 to-white px-3.5 py-2 transition-all duration-300 ease-smooth hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-sm dark:border-white/5 dark:from-white/[0.03] dark:to-white/[0.01] dark:hover:border-primary/40"
             >
               <span
@@ -307,6 +307,7 @@ import AdSlot from '~/themes/de.test.com/components/AdSlot.vue'
 import SubToolCard from '~/themes/de.test.com/components/category/SubToolCard.vue'
 import SubToolAdCard from '~/themes/de.test.com/components/category/SubToolAdCard.vue'
 import { useGradientPalette } from '~/composables/useGradientPalette'
+import { useAppRoutes } from '~/composables/useAppRoutes'
 
 const props = defineProps({
   error: { type: Object, required: true },
@@ -317,6 +318,8 @@ const runtimeConfig = useRuntimeConfig()
 const siteUrl = runtimeConfig.public?.siteUrl || 'https://aiseekertools.com'
 
 const { gradientByKey } = useGradientPalette()
+const { l2Url } = useAppRoutes()
+const l2UrlFor = (cat) => l2Url(cat?.parentHandle || '', cat?.handle)
 
 // ---------- Error classification ----------
 const errorCode = computed(() => {

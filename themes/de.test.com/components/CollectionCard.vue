@@ -1,6 +1,6 @@
 <template>
   <NuxtLink
-    :to="collection.href || `/category/${collection.handle}`"
+    :to="collection.href || `/${collection.handle}`"
     :class="[
       'group relative flex overflow-hidden rounded-2xl border transition-all duration-300 ease-smooth',
       'border-ink-200 bg-white hover:-translate-y-1 hover:shadow-card-hover',

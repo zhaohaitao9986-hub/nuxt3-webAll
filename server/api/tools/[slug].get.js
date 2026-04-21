@@ -198,6 +198,7 @@ export default defineEventHandler(async (event) => {
         id: c.id,
         name: c.name,
         handle: c.handle,
+        parentHandle: c.level1?.handle || '',
       })),
       parentCategory: subCategories[0]?.level1
         ? {
@@ -226,6 +227,7 @@ export default defineEventHandler(async (event) => {
       name: c.name,
       handle: c.handle,
       toolCount: c.tool_count || 0,
+      parentHandle: subCategories[0]?.level1?.handle || '',
     })),
   }
 })

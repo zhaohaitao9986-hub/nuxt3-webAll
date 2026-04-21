@@ -247,7 +247,7 @@ useHead({
           '@type': 'ListItem',
           position: i + 1,
           name: t.name,
-          url: t.website || `${siteUrl}/tool/${t.handle}`,
+          url: t.website || `${siteUrl}/tools/${t.handle}`,
         })),
       }),
     },

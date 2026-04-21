@@ -10,7 +10,7 @@
           <dt class="text-ink-500 dark:text-ink-400">Category</dt>
           <dd class="font-medium text-ink-800 dark:text-white">
             <NuxtLink
-              :to="`/category/${tool.parentCategory.handle}`"
+              :to="`/${tool.parentCategory.handle}`"
               class="truncate transition hover:text-primary-600 dark:hover:text-accent"
             >
               {{ tool.parentCategory.name }}

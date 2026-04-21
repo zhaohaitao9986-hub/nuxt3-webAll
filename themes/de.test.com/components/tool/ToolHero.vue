@@ -130,7 +130,7 @@
             <NuxtLink
               v-for="cat in tool.categories"
               :key="cat.handle"
-              :to="`/category/${cat.handle}`"
+              :to="l2UrlFor(cat)"
               class="inline-flex items-center gap-1 rounded-full border border-ink-200 bg-white px-2.5 py-1 text-[11px] font-medium text-ink-700 transition hover:border-primary/50 hover:text-primary-600 dark:border-white/10 dark:bg-white/5 dark:text-ink-200 dark:hover:text-white"
             >
               <span class="text-accent">#</span>{{ cat.name }}
@@ -185,11 +185,18 @@
 import { ref, computed } from 'vue'
 import CategoryBreadcrumb from '../category/CategoryBreadcrumb.vue'
 import { useGradientPalette } from '~/composables/useGradientPalette'
+import { useAppRoutes } from '~/composables/useAppRoutes'
 
 const props = defineProps({
   tool: { type: Object, required: true },
 })
 defineEmits(['bookmark'])
+
+const { l2Url } = useAppRoutes()
+// tool.categories[] 每个元素都带 parentHandle（API 已下发），
+// 兜底使用 tool.parentCategory.handle（它就是该工具的 L1）
+const l2UrlFor = (cat) =>
+  l2Url(cat?.parentHandle || props.tool?.parentCategory?.handle || '', cat?.handle)
 
 const imgError = ref(false)
 const { pickByKey, gradientByKey } = useGradientPalette()

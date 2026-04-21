@@ -79,7 +79,7 @@
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2">
           <NuxtLink
-            :to="`/tool/${tool.handle}`"
+            :to="`/tools/${tool.handle}`"
             class="min-w-0 truncate text-base font-semibold text-ink-900 transition-colors group-hover:text-primary-600 dark:text-white dark:group-hover:text-accent"
           >
             {{ tool.name }}
@@ -133,7 +133,7 @@
       </div>
 
       <a
-        :href="tool.website || `/tool/${tool.handle}`"
+        :href="tool.website || `/tools/${tool.handle}`"
         target="_blank"
         rel="noopener nofollow sponsored"
         class="btn-shine group/cta relative inline-flex flex-shrink-0 items-center gap-1 overflow-hidden rounded-lg bg-indigo-600 px-3.5 py-1.5 text-[11px] font-semibold text-white shadow-sm transition-all duration-200 ease-smooth hover:scale-105 hover:bg-gradient-cta hover:shadow-glow"

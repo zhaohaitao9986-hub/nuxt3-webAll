@@ -36,7 +36,7 @@
           <span class="font-medium text-ink-700 dark:text-ink-200">Jump to popular niches:</span>
           <template v-for="(sub, i) in topSubs" :key="sub.handle">
             <NuxtLink
-              :to="`/category/${sub.handle}`"
+              :to="l2UrlFor(sub)"
               class="text-primary-600 underline-offset-4 transition hover:underline dark:text-accent"
             >{{ sub.name }}</NuxtLink><span v-if="i < topSubs.length - 1">, </span>
           </template>.
@@ -47,9 +47,14 @@
 </template>
 
 <script setup>
+import { useAppRoutes } from '~/composables/useAppRoutes'
+
 defineProps({
   title: { type: String, default: 'Explore AI Categories' },
   body: { type: String, default: '' },
   topSubs: { type: Array, default: () => [] },
 })
+
+const { l2Url } = useAppRoutes()
+const l2UrlFor = (sub) => l2Url(sub?.parentHandle || '', sub?.handle)
 </script>

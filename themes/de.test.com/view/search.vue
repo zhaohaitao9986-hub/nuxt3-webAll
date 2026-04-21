@@ -381,7 +381,7 @@ useHead(() => {
         '@type': 'SoftwareApplication',
         position: i + 1,
         name: t.name,
-        url: t.website || `${siteUrl}/tool/${t.handle}`,
+        url: t.website || `${siteUrl}/tools/${t.handle}`,
         aggregateRating: t.rating
           ? { '@type': 'AggregateRating', ratingValue: t.rating, bestRating: 5, reviewCount: 1 }
           : undefined,

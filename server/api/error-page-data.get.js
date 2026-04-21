@@ -45,7 +45,13 @@ export default defineEventHandler(async (event) => {
       where: { is_active: true },
       orderBy: [{ tool_count: 'desc' }, { sort: 'asc' }],
       take: TOP_CATEGORIES_TAKE,
-      select: { id: true, name: true, handle: true, tool_count: true },
+      select: {
+        id: true,
+        name: true,
+        handle: true,
+        tool_count: true,
+        level1: { select: { handle: true } },
+      },
     }),
   ])
 
@@ -75,6 +81,7 @@ export default defineEventHandler(async (event) => {
     name: c.name,
     handle: c.handle,
     toolCount: c.tool_count || 0,
+    parentHandle: c.level1?.handle || '',
   }))
 
   setHeader(event, 'Cache-Control', 'public, max-age=1800, stale-while-revalidate=3600')

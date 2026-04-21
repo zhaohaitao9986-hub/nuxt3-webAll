@@ -116,7 +116,13 @@ export default defineEventHandler(async (event) => {
       where: { is_active: true },
       orderBy: [{ tool_count: 'desc' }, { sort: 'asc' }],
       take: SIMILAR_CATS_TAKE,
-      select: { id: true, name: true, handle: true, tool_count: true },
+      select: {
+        id: true,
+        name: true,
+        handle: true,
+        tool_count: true,
+        level1: { select: { handle: true } },
+      },
     }),
   ])
 
@@ -172,6 +178,7 @@ export default defineEventHandler(async (event) => {
       name: c.name,
       handle: c.handle,
       toolCount: c.tool_count || 0,
+      parentHandle: c.level1?.handle || '',
     })),
     trendingTags: TRENDING_TAGS,
     meta: {

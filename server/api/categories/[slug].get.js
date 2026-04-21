@@ -185,6 +185,7 @@ export default defineEventHandler(async (event) => {
       name: r.name,
       handle: r.handle,
       toolCount: r.tool_count || 0,
+      parentHandle: category.level1?.handle || '',
     })),
   }
 })

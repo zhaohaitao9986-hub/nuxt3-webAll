@@ -29,7 +29,7 @@
         <NuxtLink
           v-for="c in suggestedCategories.slice(0, 8)"
           :key="c.id"
-          :to="`/category/${c.handle}`"
+          :to="l2UrlFor(c)"
           class="inline-flex items-center gap-1 rounded-full border border-ink-200 bg-white px-3 py-1.5 text-xs font-medium text-ink-700 transition hover:-translate-y-0.5 hover:border-primary/50 hover:text-primary-600 dark:border-white/10 dark:bg-white/5 dark:text-ink-200 dark:hover:text-white"
         >
           <span class="text-accent">#</span>
@@ -78,10 +78,14 @@
 
 <script setup>
 import SubToolCard from '../category/SubToolCard.vue'
+import { useAppRoutes } from '~/composables/useAppRoutes'
 
 defineProps({
   query: { type: String, default: '' },
   tools: { type: Array, default: () => [] },
   suggestedCategories: { type: Array, default: () => [] },
 })
+
+const { l2Url } = useAppRoutes()
+const l2UrlFor = (c) => l2Url(c?.parentHandle || '', c?.handle)
 </script>

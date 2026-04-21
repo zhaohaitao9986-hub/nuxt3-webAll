@@ -57,7 +57,7 @@
             <NuxtLink
               v-for="tag in hub.tags"
               :key="tag.handle"
-              :to="`/category/${tag.handle}`"
+              :to="l2UrlFor(tag)"
               class="inline-flex items-center gap-1 rounded-full border border-ink-200 bg-white px-3 py-1 text-xs font-medium text-ink-700 transition hover:-translate-y-0.5 hover:border-primary/60 hover:text-primary-600 dark:border-white/10 dark:bg-white/5 dark:text-ink-200 dark:hover:text-white"
             >
               <span class="text-accent">#</span>{{ tag.name }}
@@ -106,6 +106,10 @@
   import TrendingNiches from '../components/category/TrendingNiches.vue'
   import CategoryMatrix from '../components/category/CategoryMatrix.vue'
   import CategorySeoBlock from '../components/category/CategorySeoBlock.vue'
+  import { useAppRoutes } from '~/composables/useAppRoutes'
+
+  const { l2Url } = useAppRoutes()
+  const l2UrlFor = (item) => l2Url(item?.parentHandle || '', item?.handle)
   
   const route = useRoute()
   const runtimeConfig = useRuntimeConfig()
@@ -129,6 +133,7 @@
   const counts = computed(() => hub.value?.counts || { level1Total: 0, level2Total: 0 })
   
   // 聚合所有二级分类供搜索用（纯本地过滤，零网络延迟）
+  // 每一项都带上 parentHandle，CategorySearch 据此跳转到 /{l1}/{l2}
   const searchableSubs = computed(() => {
     const list = []
     const seen = new Set()
@@ -139,14 +144,31 @@
     }
     ;(hub.value?.level1 || []).forEach((l1) => {
       ;(l1.topSubs || []).forEach((s) =>
-        push({ id: s.id, name: s.name, handle: s.handle, toolCount: s.toolCount }),
+        push({
+          id: s.id,
+          name: s.name,
+          handle: s.handle,
+          toolCount: s.toolCount,
+          parentHandle: l1.handle,
+        }),
       )
     })
     ;(hub.value?.trending || []).forEach((t) =>
-      push({ id: t.id, name: t.name, handle: t.handle, toolCount: t.toolCount }),
+      push({
+        id: t.id,
+        name: t.name,
+        handle: t.handle,
+        toolCount: t.toolCount,
+        parentHandle: t.parentHandle || '',
+      }),
     )
     ;(hub.value?.tags || []).forEach((t) =>
-      push({ id: t.id, name: t.name, handle: t.handle }),
+      push({
+        id: t.id,
+        name: t.name,
+        handle: t.handle,
+        parentHandle: t.parentHandle || '',
+      }),
     )
     return list
   })
@@ -168,7 +190,7 @@
     '@type': 'BreadcrumbList',
     itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'Home', item: siteUrl },
-      { '@type': 'ListItem', position: 2, name: 'Categories', item: `${siteUrl}/category` },
+      { '@type': 'ListItem', position: 2, name: 'Categories', item: `${siteUrl}/ai-tools` },
     ],
   }))
   
@@ -180,7 +202,7 @@
       '@type': 'ListItem',
       position: i + 1,
       name: l1.name,
-      url: `${siteUrl}/category/${l1.handle}`,
+      url: `${siteUrl}/${l1.handle}`,
     })),
   }))
   
