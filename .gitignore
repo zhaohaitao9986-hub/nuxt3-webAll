@@ -1,0 +1,16 @@
+# Logs
+logs
+*.log
+.nuxt
+node_modules
+dist
+dist-ssr
+*.local
+.env
+
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+
+
