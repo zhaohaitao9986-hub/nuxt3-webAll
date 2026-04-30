@@ -1,0 +1,126 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------- CSS variables (light default, dark via .dark on <html>) ---------- */
+:root {
+  --bg: 246 247 251;            /* ink-50 */
+  --bg-soft: 255 255 255;
+  --surface: 255 255 255;
+  --surface-2: 246 247 251;
+  --border: 226 229 238;
+  --text: 20 22 31;
+  --text-soft: 86 91 114;
+  --primary: 124 92 255;
+  --accent: 34 211 238;
+  --signal: 244 114 182;
+  color-scheme: light;
+}
+
+html.dark {
+  --bg: 10 11 16;               /* ink-900 */
+  --bg-soft: 20 22 31;          /* ink-800 */
+  --surface: 20 22 31;
+  --surface-2: 35 38 55;        /* ink-700 */
+  --border: 42 46 68;
+  --text: 237 239 247;          /* ink-100 */
+  --text-soft: 169 173 193;
+  color-scheme: dark;
+}
+
+/* ---------- Base ---------- */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: rgb(var(--bg));
+  color: rgb(var(--text));
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgb(var(--primary) / 0.25);
+  color: rgb(var(--text));
+}
+
+/* ---------- Utilities ---------- */
+@layer utilities {
+  /* 隐藏滚动条但保留滚动能力 —— 移动端 Pill 横滑专用 */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 毛玻璃表面 */
+  .glass {
+    background: rgb(var(--surface) / 0.72);
+    backdrop-filter: saturate(160%) blur(14px);
+    -webkit-backdrop-filter: saturate(160%) blur(14px);
+    border: 1px solid rgb(var(--border) / 0.6);
+  }
+
+  .glass-strong {
+    background: rgb(var(--surface) / 0.86);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+  }
+
+  /* 发光边框 */
+  .ring-glow {
+    box-shadow:
+      0 0 0 1px rgb(var(--primary) / 0.35),
+      0 12px 48px -12px rgb(var(--primary) / 0.45);
+  }
+
+  /* 文字渐变 */
+  .text-gradient {
+    background: linear-gradient(90deg, #a88eff 0%, #22d3ee 50%, #f472b6 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    background-size: 200% 100%;
+  }
+
+  /* 底部 SEO 堆叠关键词 —— 视觉弱化 */
+  .seo-stuff {
+    color: rgb(var(--text-soft) / 0.35);
+    font-size: 11px;
+    line-height: 1.6;
+  }
+
+  /* 防 CLS 图片容器 */
+  .aspect-card { aspect-ratio: 16 / 9; }
+  .aspect-hero-card { aspect-ratio: 3 / 2; }
+
+  /* 悬停光标追随按钮 */
+  .btn-shine {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .btn-shine::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      200px circle at var(--mx, 50%) var(--my, 50%),
+      rgba(255, 255, 255, 0.18),
+      transparent 40%
+    );
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    z-index: -1;
+  }
+  .btn-shine:hover::before { opacity: 1; }
+}

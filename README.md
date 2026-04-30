@@ -1,4 +1,7 @@
+
+
 ## Setup
+
 
 
 ```bash
@@ -17,6 +20,7 @@ bun install
 
 ## Development Server
 
+
 ```bash
 # npm
 npm run dev
@@ -33,7 +37,7 @@ bun run dev
 
 ## Production
 
-Build the application for production:
+
 
 ```bash
 # npm

@@ -1,0 +1,115 @@
+// This is your Prisma schema file
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 数据库：PostgreSQL
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id    Int     @id @default(autoincrement())
+  name  String?
+  email String  @unique
+  age   Int?
+}
+
+// 一级分类
+model CategoryLevel1 {
+  id          Int             @id @default(autoincrement())
+  name        String
+  handle      String          @unique
+  sort        Int             @default(0)
+  is_active   Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  level2Categories CategoryLevel2[]
+
+  @@map("category_level1")
+}
+
+// 二级分类（你爬取的分类）
+model CategoryLevel2 {
+  id              Int             @id @default(autoincrement())
+  name            String
+  handle          String          @unique
+  tool_count      Int             @default(0)
+  sort            Int             @default(0)
+  is_active       Boolean         @default(true)
+
+  level1Id        Int
+  level1          CategoryLevel1  @relation(fields: [level1Id], references: [id], onDelete: Cascade)
+
+  // 多对多关联工具
+  toolCategories  AiToolCategory[]
+  //新增字段
+  what_is_summary String?
+  feature         String[]
+  who_is_use      String?
+  how_do_work     String?
+  advantages      String?
+  faq             Json?
+
+
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@map("category_level2")
+}
+
+// 工具 <-> 二级分类 关联表
+model AiToolCategory {
+  aiToolId    Int
+  categoryId  Int
+  aiTool      AiTool           @relation(fields: [aiToolId], references: [id], onDelete: Cascade)
+  category    CategoryLevel2   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([aiToolId, categoryId])
+  @@map("ai_tool_categories")
+}
+
+// 核心 AI 工具表（完全匹配你爬取的数据）
+model AiTool {
+  id                  Int      @id @default(autoincrement())
+  website             String?
+  collected_count     Int      @default(0)
+  description         String?
+  handle              String   @unique
+  image               String?
+  month_visited_count BigInt   @default(0)
+  name                String
+  what_is_summary     String?
+  is_ad               Boolean  @default(false)
+  website_name        String?
+  is_free             Boolean  @default(false)
+  website_logo        String?
+
+  pros                String[]
+  cons                String[]
+  //新增字段
+  pricing             String[]
+  feature             String[]
+  tool_info_review    Decimal? @db.Decimal(3, 1)
+
+  add_time            String?
+  website_type        String[]
+  social_email        String[]
+  tags                String[]
+  faq                 Json?
+  for_jobs            String[]
+  use_cases           String[] 
+  company_info        String? 
+  recommend_learn     String[] 
+
+  // 多对多关联（已修复）
+  toolCategories      AiToolCategory[]
+
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  @@map("ai_tools")
+}
