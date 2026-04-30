@@ -9,43 +9,55 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// 用户权限枚举
+enum Role {
+  USER
+  ADMIN
+  SUPERADMIN
+}
+
+// 用户表：整合了前台用户和后台管理员
 model User {
-  id    Int     @id @default(autoincrement())
-  name  String?
-  email String  @unique
-  age   Int?
+  id            Int      @id @default(autoincrement())
+  name          String?
+  email         String   @unique
+  password      String   // 新增：后台登录必须有密码
+  avatar        String?  // 新增：头像
+  role          Role     @default(USER) // 新增：区分角色
+  isActive      Boolean  @default(true) // 新增：是否禁用账户
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("users")
 }
 
 // 一级分类
 model CategoryLevel1 {
-  id          Int             @id @default(autoincrement())
-  name        String
-  handle      String          @unique
-  sort        Int             @default(0)
-  is_active   Boolean         @default(true)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-
+  id               Int              @id @default(autoincrement())
+  name             String
+  handle           String           @unique
+  sort             Int              @default(0)
+  is_active        Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
   level2Categories CategoryLevel2[]
 
   @@map("category_level1")
 }
 
-// 二级分类（你爬取的分类）
+// 二级分类
 model CategoryLevel2 {
-  id              Int             @id @default(autoincrement())
+  id              Int              @id @default(autoincrement())
   name            String
-  handle          String          @unique
-  tool_count      Int             @default(0)
-  sort            Int             @default(0)
-  is_active       Boolean         @default(true)
-
+  handle          String           @unique
+  tool_count      Int              @default(0)
+  sort            Int              @default(0)
+  is_active       Boolean          @default(true)
   level1Id        Int
-  level1          CategoryLevel1  @relation(fields: [level1Id], references: [id], onDelete: Cascade)
-
-  // 多对多关联工具
+  level1          CategoryLevel1   @relation(fields: [level1Id], references: [id], onDelete: Cascade)
   toolCategories  AiToolCategory[]
-  //新增字段
+  
   what_is_summary String?
   feature         String[]
   who_is_use      String?
@@ -53,63 +65,56 @@ model CategoryLevel2 {
   advantages      String?
   faq             Json?
 
-
-
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   @@map("category_level2")
 }
 
-// 工具 <-> 二级分类 关联表
+// 中间表
 model AiToolCategory {
-  aiToolId    Int
-  categoryId  Int
-  aiTool      AiTool           @relation(fields: [aiToolId], references: [id], onDelete: Cascade)
-  category    CategoryLevel2   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  aiToolId   Int
+  categoryId Int
+  aiTool     AiTool         @relation(fields: [aiToolId], references: [id], onDelete: Cascade)
+  category   CategoryLevel2 @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@id([aiToolId, categoryId])
   @@map("ai_tool_categories")
 }
 
-// 核心 AI 工具表（完全匹配你爬取的数据）
+// 核心 AI 工具表
 model AiTool {
-  id                  Int      @id @default(autoincrement())
-  website             String?
-  collected_count     Int      @default(0)
-  description         String?
-  handle              String   @unique
-  image               String?
-  month_visited_count BigInt   @default(0)
-  name                String
-  what_is_summary     String?
-  is_ad               Boolean  @default(false)
-  website_name        String?
-  is_free             Boolean  @default(false)
-  website_logo        String?
-
-  pros                String[]
-  cons                String[]
-  //新增字段
-  pricing             String[]
-  feature             String[]
-  tool_info_review    Decimal? @db.Decimal(3, 1)
-
-  add_time            String?
-  website_type        String[]
-  social_email        String[]
-  tags                String[]
-  faq                 Json?
-  for_jobs            String[]
-  use_cases           String[] 
-  company_info        String? 
-  recommend_learn     String[] 
-
-  // 多对多关联（已修复）
-  toolCategories      AiToolCategory[]
-
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
+  id                   Int              @id @default(autoincrement())
+  website              String?
+  collected_count      Int              @default(0)
+  description          String?
+  handle               String           @unique
+  image                String?
+  month_visited_count  BigInt           @default(0)
+  name                 String
+  what_is_summary      String?
+  is_ad                Boolean          @default(false)
+  website_name         String?
+  is_free              Boolean          @default(false)
+  website_logo         String?
+  pros                 String[]
+  cons                 String[]
+  pricing              String[]
+  feature              String[]
+  tool_info_review     Decimal?         @db.Decimal(3, 1)
+  add_time             String?
+  website_type         String[]
+  social_email         String[]
+  tags                 String[]
+  faq                  Json?
+  for_jobs             String[]
+  use_cases            String[]
+  company_info         String?
+  recommend_learn      String[]
+  toolCategories       AiToolCategory[]
+  
+  created_at           DateTime         @default(now())
+  updated_at           DateTime         @updatedAt
 
   @@map("ai_tools")
 }
