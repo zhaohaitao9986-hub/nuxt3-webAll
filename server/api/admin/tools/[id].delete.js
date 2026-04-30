@@ -1,0 +1,21 @@
+import prisma from '~/server/utils/prisma'
+
+export default defineEventHandler(async (event) => {
+  const id = Number(getRouterParam(event, 'id'))
+  if (Number.isNaN(id)) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid id' })
+  }
+
+  try {
+    await prisma.aiTool.delete({ where: { id } })
+  }
+  catch (e) {
+    const err = e
+    if (err && err.code === 'P2025') {
+      throw createError({ statusCode: 404, statusMessage: 'Not found' })
+    }
+    throw e
+  }
+
+  return { ok: true }
+})

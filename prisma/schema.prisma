@@ -112,9 +112,31 @@ model AiTool {
   company_info         String?
   recommend_learn      String[]
   toolCategories       AiToolCategory[]
+
+
+  // 新增字段
+  status            Int      @default(1) // 0: 草稿/待审核, 1: 已发布, -1: 已下架
+  views             Int      @default(0) // 平台内部的真实/模拟点击量
+  sort_weight       Int      @default(0) // 排序权重，用于人工干预置顶或强推
+  seo_title         String?  // 独立 SEO 标题 (为了更好的收录)
+  seo_keywords      String?  // 独立 SEO 关键词
   
   created_at           DateTime         @default(now())
   updated_at           DateTime         @updatedAt
 
   @@map("ai_tools")
+}
+
+
+// 2. 新增：操作日志表 (用于追溯管理员行为)
+model OperationLog {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  action      String   // 例如："UPDATE_TOOL", "DELETE_USER"
+  targetId    Int?     // 被操作的资源ID
+  details     Json?    // 具体的变更内容快照
+  ipAddress   String?  
+  createdAt   DateTime @default(now())
+
+  @@map("operation_logs")
 }

@@ -3,17 +3,12 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: true },
   css: [
-   '~/assets/css/main.css',
-   '~/assets/css/font.css',
-   "nprogress/nprogress.css"
  ],
+  modules: ['@nuxtjs/tailwindcss', '@element-plus/nuxt'],
 
-  modules: ['@nuxtjs/tailwindcss'],
+  routeRules: {
+    '/admin/**': { ssr: false },
+  },
   components: [
-    {
-      path: '~/themes',
-      extensions: ['.vue'],
-    },
-    '~/components',
   ],
 })
