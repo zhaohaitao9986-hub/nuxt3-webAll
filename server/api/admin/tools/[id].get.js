@@ -1,4 +1,5 @@
 import prisma from '~/server/utils/prisma'
+import { assertAnyAdmin } from '~/server/utils/requireAdminRole'
 
 function serializeTool(row) {
   const { month_visited_count: mvc, tool_info_review: tir, toolCategories, ...rest } = row
@@ -14,6 +15,7 @@ function serializeTool(row) {
 }
 
 export default defineEventHandler(async (event) => {
+  assertAnyAdmin(event)
   const id = Number(getRouterParam(event, 'id'))
   if (Number.isNaN(id)) {
     throw createError({ statusCode: 400, statusMessage: 'Invalid id' })

@@ -1,4 +1,5 @@
 import prisma from '~/server/utils/prisma'
+import { assertAnyAdmin } from '~/server/utils/requireAdminRole'
 
 function parseOptionalInt(v) {
   if (v === undefined || v === null || v === '') {
@@ -19,6 +20,7 @@ function normalizeCategoryIds(body) {
 }
 
 export default defineEventHandler(async (event) => {
+  assertAnyAdmin(event)
   const body = await readBody(event)
   if (!body || typeof body !== 'object') {
     throw createError({ statusCode: 400, statusMessage: 'Invalid body' })

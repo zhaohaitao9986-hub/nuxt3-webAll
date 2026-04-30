@@ -1,5 +1,4 @@
 <script setup>
-
 import { ElMessage } from 'element-plus'
 
 definePageMeta({
@@ -137,7 +136,7 @@ function resetFormForCreate() {
 
 async function loadCategories() {
   try {
-    const res = await $fetch('/api/admin/categories/options')
+    const res = await useAdminFetch('/api/admin/categories/options')
     categoryOptions.value = res.data || []
   }
   catch {
@@ -172,10 +171,13 @@ async function loadTool() {
   }
   loading.value = true
   try {
-    const row = await $fetch(`/api/admin/tools/${idParam.value}`)
+    const row = await useAdminFetch(`/api/admin/tools/${idParam.value}`)
     applyToolToForm(row)
   }
   catch (e) {
+    if (e?.statusCode === 401 || e?.status === 401) {
+      return
+    }
     ElMessage.error(e?.data?.statusMessage || e?.data?.message || e?.message || '加载失败')
     await router.replace('/admin/tools')
   }
@@ -223,14 +225,14 @@ async function onSubmit() {
   submitting.value = true
   try {
     if (isEdit.value) {
-      await $fetch(`/api/admin/tools/${idParam.value}`, {
+      await useAdminFetch(`/api/admin/tools/${idParam.value}`, {
         method: 'PUT',
         body,
       })
       ElMessage.success('已保存')
     }
     else {
-      await $fetch('/api/admin/tools', {
+      await useAdminFetch('/api/admin/tools', {
         method: 'POST',
         body,
       })
@@ -239,6 +241,9 @@ async function onSubmit() {
     await router.push('/admin/tools')
   }
   catch (e) {
+    if (e?.statusCode === 401 || e?.status === 401) {
+      return
+    }
     ElMessage.error(e?.data?.statusMessage || e?.data?.message || e?.message || '保存失败')
   }
   finally {

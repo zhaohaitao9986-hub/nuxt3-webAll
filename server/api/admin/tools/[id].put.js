@@ -1,4 +1,5 @@
 import prisma from '~/server/utils/prisma'
+import { assertAnyAdmin } from '~/server/utils/requireAdminRole'
 
 function parseOptionalInt(v) {
   if (v === undefined || v === null || v === '') {
@@ -9,6 +10,7 @@ function parseOptionalInt(v) {
 }
 
 export default defineEventHandler(async (event) => {
+  assertAnyAdmin(event)
   const id = Number(getRouterParam(event, 'id'))
   if (Number.isNaN(id)) {
     throw createError({ statusCode: 400, statusMessage: 'Invalid id' })

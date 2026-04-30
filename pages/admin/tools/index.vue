@@ -5,6 +5,8 @@ definePageMeta({
   layout: 'admin',
 })
 
+const userStore = useUserStore()
+
 const filters = reactive({
   name: '',
   categoryId: '',
@@ -26,6 +28,8 @@ const statusOptions = [
 ]
 
 const statusLoading = reactive({})
+
+const canDeleteTool = computed(() => userStore.user?.role === 'SUPERADMIN')
 
 function formatCategoryNames(row) {
   const tcs = row.toolCategories
@@ -49,7 +53,7 @@ function logoSrc(row) {
 
 async function loadCategories() {
   try {
-    const res = await $fetch('/api/admin/categories/options')
+    const res = await useAdminFetch('/api/admin/categories/options')
     categoryOptions.value = res.data || []
   }
   catch {
@@ -73,11 +77,14 @@ async function loadList() {
     if (filters.status !== '' && filters.status != null) {
       query.status = Number(filters.status)
     }
-    const res = await $fetch('/api/admin/tools', { query })
+    const res = await useAdminFetch('/api/admin/tools', { query })
     list.value = res.data || []
     total.value = res.total ?? 0
   }
   catch (e) {
+    if (e?.statusCode === 401 || e?.status === 401) {
+      return
+    }
     ElMessage.error(e?.data?.message || e?.message || '加载失败')
     list.value = []
     total.value = 0
@@ -116,7 +123,7 @@ async function onStatusChange(row, published) {
   const next = published ? 1 : 0
   statusLoading[id] = true
   try {
-    await $fetch(`/api/admin/tools/${id}`, {
+    await useAdminFetch(`/api/admin/tools/${id}`, {
       method: 'PUT',
       body: { status: next },
     })
@@ -124,6 +131,9 @@ async function onStatusChange(row, published) {
     ElMessage.success('状态已更新')
   }
   catch (e) {
+    if (e?.statusCode === 401 || e?.status === 401) {
+      return
+    }
     ElMessage.error(e?.data?.statusMessage || e?.data?.message || e?.message || '更新失败')
   }
   finally {
@@ -138,6 +148,10 @@ function onEdit(row) {
   })
 }
 
+function onCreate() {
+  navigateTo({ path: '/admin/tools/edit' })
+}
+
 async function onDelete(row) {
   try {
     await ElMessageBox.confirm(`确定删除「${row.name}」吗？`, '删除确认', {
@@ -150,11 +164,18 @@ async function onDelete(row) {
     return
   }
   try {
-    await $fetch(`/api/admin/tools/${row.id}`, { method: 'DELETE' })
+    await useAdminFetch(`/api/admin/tools/${row.id}`, { method: 'DELETE' })
     ElMessage.success('已删除')
     await loadList()
   }
   catch (e) {
+    if (e?.statusCode === 401 || e?.status === 401) {
+      return
+    }
+    if (e?.statusCode === 403 || e?.status === 403) {
+      ElMessage.warning(e?.data?.statusMessage || '权限不足')
+      return
+    }
     ElMessage.error(e?.data?.statusMessage || e?.data?.message || e?.message || '删除失败')
   }
 }
@@ -216,6 +237,11 @@ onMounted(() => {
     </el-card>
 
     <el-card shadow="never" class="tools-table-card">
+      <div class="tools-table-toolbar">
+        <el-button type="primary" @click="onCreate">
+          新建工具
+        </el-button>
+      </div>
       <el-table
         v-loading="loading"
         :data="list"
@@ -266,7 +292,12 @@ onMounted(() => {
             <el-button link type="primary" @click="onEdit(row)">
               编辑
             </el-button>
-            <el-button link type="danger" @click="onDelete(row)">
+            <el-button
+              v-if="canDeleteTool"
+              link
+              type="danger"
+              @click="onDelete(row)"
+            >
               删除
             </el-button>
           </template>
@@ -306,6 +337,10 @@ onMounted(() => {
 
 .tools-table-card :deep(.el-card__body) {
   padding-top: 12px;
+}
+
+.tools-table-toolbar {
+  margin-bottom: 12px;
 }
 
 .tools-logo {

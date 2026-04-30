@@ -1,4 +1,5 @@
 import prisma from '~/server/utils/prisma'
+import { assertAnyAdmin } from '~/server/utils/requireAdminRole'
 
 function serializeToolRow(row) {
   const { month_visited_count: mvc, tool_info_review: tir, ...rest } = row
@@ -13,6 +14,7 @@ function serializeToolRow(row) {
 }
 
 export default defineEventHandler(async (event) => {
+  assertAnyAdmin(event)
   const query = getQuery(event)
   const page = Math.max(1, Number(query.page) || 1)
   const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))

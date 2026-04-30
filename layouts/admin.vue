@@ -7,12 +7,15 @@ import {
   User,
 } from '@element-plus/icons-vue'
 
+const userStore = useUserStore()
+
 const route = useRoute()
 
 const titleMap = {
   '/admin/dashboard': '仪表盘',
   '/admin/tools': 'AI 工具管理',
-  '/admin/categories': '分类管理',
+  '/admin/categories': '二级分类',
+  '/admin/categories/level1': '一级分类',
   '/admin/users': '管理员设置',
 }
 
@@ -24,6 +27,12 @@ const currentTitle = computed(() => {
   if (full.startsWith('/admin/tools')) {
     return 'AI 工具管理'
   }
+  if (full.startsWith('/admin/categories/level1')) {
+    return '一级分类'
+  }
+  if (full.startsWith('/admin/categories')) {
+    return '二级分类'
+  }
   return '页面'
 })
 
@@ -31,6 +40,9 @@ const activeMenu = computed(() => {
   const p = route.path
   if (p.startsWith('/admin/tools')) {
     return '/admin/tools'
+  }
+  if (p.startsWith('/admin/categories/level1')) {
+    return '/admin/categories/level1'
   }
   if (p.startsWith('/admin/categories')) {
     return '/admin/categories'
@@ -44,10 +56,22 @@ const activeMenu = computed(() => {
   return p
 })
 
-const displayName = computed(() => '管理员')
+const displayName = computed(() => {
+  const u = userStore.user
+  if (u?.name) {
+    return u.name
+  }
+  if (u?.email) {
+    return u.email
+  }
+  return '管理员'
+})
 
-async function handleLogout() {
-  await navigateTo('/admin/login')
+function handleCommand(cmd) {
+  if (cmd === 'logout') {
+    userStore.logout()
+    navigateTo('/admin/login')
+  }
 }
 </script>
 
@@ -73,10 +97,18 @@ async function handleLogout() {
           <el-icon><MagicStick /></el-icon>
           <span>AI 工具管理</span>
         </el-menu-item>
-        <el-menu-item index="/admin/categories">
-          <el-icon><FolderOpened /></el-icon>
-          <span>分类管理</span>
-        </el-menu-item>
+        <el-sub-menu index="sub-categories">
+          <template #title>
+            <el-icon><FolderOpened /></el-icon>
+            <span>分类管理</span>
+          </template>
+          <el-menu-item index="/admin/categories">
+            二级分类
+          </el-menu-item>
+          <el-menu-item index="/admin/categories/level1">
+            一级分类
+          </el-menu-item>
+        </el-sub-menu>
         <el-menu-item index="/admin/users">
           <el-icon><User /></el-icon>
           <span>管理员设置</span>
@@ -95,7 +127,7 @@ async function handleLogout() {
           </el-breadcrumb-item>
         </el-breadcrumb>
 
-        <el-dropdown trigger="click" @command="handleLogout">
+        <el-dropdown trigger="click" @command="handleCommand">
           <span class="admin-user-trigger">
             <el-avatar :size="32" class="admin-avatar">
               {{ displayName.slice(0, 1) }}
@@ -152,6 +184,27 @@ async function handleLogout() {
 }
 
 .admin-menu :deep(.el-menu-item.is-active) {
+  background-color: #374151 !important;
+}
+
+.admin-menu :deep(.el-sub-menu__title) {
+  color: #cbd5e1;
+}
+
+.admin-menu :deep(.el-sub-menu.is-opened > .el-sub-menu__title),
+.admin-menu :deep(.el-sub-menu__title:hover) {
+  color: #f9fafb;
+}
+
+.admin-menu :deep(.el-menu-item) {
+  background-color: transparent !important;
+}
+
+.admin-menu :deep(.el-sub-menu .el-menu-item) {
+  background-color: transparent !important;
+}
+
+.admin-menu :deep(.el-sub-menu .el-menu-item.is-active) {
   background-color: #374151 !important;
 }
 

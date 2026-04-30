@@ -9,11 +9,10 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    await prisma.aiTool.delete({ where: { id } })
+    await prisma.categoryLevel1.delete({ where: { id } })
   }
   catch (e) {
-    const err = e
-    if (err && err.code === 'P2025') {
+    if (e?.code === 'P2025') {
       throw createError({ statusCode: 404, statusMessage: 'Not found' })
     }
     throw e

@@ -4,7 +4,11 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   css: [
  ],
-  modules: ['@nuxtjs/tailwindcss', '@element-plus/nuxt'],
+  modules: ['@pinia/nuxt', '@nuxtjs/tailwindcss', '@element-plus/nuxt'],
+
+  runtimeConfig: {
+    jwtSecret: process.env.JWT_SECRET || '',
+  },
 
   routeRules: {
     '/admin/**': { ssr: false },
