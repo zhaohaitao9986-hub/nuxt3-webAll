@@ -5,6 +5,7 @@ import {
   conversionPredicateSql,
   formatTrafficFilters,
   identitySql,
+  trafficChannelSql,
   normalizeTrafficQuery,
 } from '~/server/utils/adminTraffic'
 
@@ -43,11 +44,9 @@ export default defineEventHandler(async (event) => {
   `
 
   const channels = await prisma.$queryRaw`
-    SELECT DISTINCT t."utm_source" AS "value"
+    SELECT DISTINCT ${trafficChannelSql('t')} AS "value"
     FROM "traffic_logs" AS t
-    WHERE t."utm_source" IS NOT NULL
-      AND BTRIM(t."utm_source") <> ''
-    ORDER BY t."utm_source" ASC
+    ORDER BY ${trafficChannelSql('t')} ASC
   `
 
   return {

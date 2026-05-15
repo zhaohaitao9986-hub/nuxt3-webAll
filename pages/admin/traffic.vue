@@ -176,7 +176,7 @@ onMounted(loadAll)
           流量分析
         </h2>
         <p class="traffic-subtitle">
-          基于 traffic_logs 的后台聚合看板，当前支持按日期、渠道和设备筛选。
+          基于 traffic_logs 的后台聚合看板，渠道优先取 utm_source，缺失时回退 ref 和 URL 参数归因；小时统计按 UTC+8 展示。
         </p>
       </div>
     </div>

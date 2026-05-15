@@ -5,6 +5,8 @@ import {
   conversionPredicateSql,
   formatTrafficFilters,
   identitySql,
+  localDateSql,
+  localTimestampSql,
   normalizeTrafficQuery,
 } from '~/server/utils/adminTraffic'
 
@@ -17,8 +19,8 @@ export default defineEventHandler(async (event) => {
   const rows = await prisma.$queryRaw`
     WITH buckets AS (
       SELECT generate_series(
-        date_trunc('hour', ${filters.startAt}::timestamp),
-        date_trunc('hour', ${filters.endAt}::timestamp - INTERVAL '1 hour'),
+        date_trunc('hour', ${localDateSql(filters.startAt)}),
+        date_trunc('hour', ${localDateSql(filters.endAt)} - INTERVAL '1 hour'),
         INTERVAL '1 hour'
       ) AS "bucket"
     ),
@@ -29,7 +31,7 @@ export default defineEventHandler(async (event) => {
     ),
     aggregated AS (
       SELECT
-        date_trunc('hour', f."createdAt") AS "bucket",
+        date_trunc('hour', ${localTimestampSql('f')}) AS "bucket",
         COUNT(DISTINCT ${identitySql('f')})::int AS "uv",
         COUNT(*)::int AS "pv",
         CASE

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client'
 const DEFAULT_PAGE_SIZE = 20
 const MAX_PAGE_SIZE = 100
 const DEFAULT_RANGE = 'today'
+const ADMIN_TIMEZONE = 'Asia/Shanghai'
 
 function toDate(value) {
   if (typeof value !== 'string' || !value.trim()) {
@@ -84,6 +85,52 @@ export function conversionPredicateSql(alias) {
   return Prisma.raw(`LOWER(COALESCE("${alias}"."type", '')) ~ '(conversion|convert|lead|submit|download|outbound|clickout|click_out|signup|purchase)'`)
 }
 
+function normalizedRefHostExpr(alias) {
+  return `LOWER(REGEXP_REPLACE(COALESCE("${alias}"."ref", ''), '^https?://([^/]+).*$','\\1'))`
+}
+
+function urlExpr(alias) {
+  return `LOWER(COALESCE("${alias}"."url", ''))`
+}
+
+function utmSourceExpr(alias) {
+  return `LOWER(BTRIM(COALESCE("${alias}"."utm_source", '')))`
+}
+
+export function trafficChannelSql(alias = 't') {
+  const refHost = normalizedRefHostExpr(alias)
+  const url = urlExpr(alias)
+  const utmSource = utmSourceExpr(alias)
+
+  return Prisma.raw(`
+    CASE
+      WHEN ${utmSource} <> '' THEN ${utmSource}
+      WHEN ${url} ~ '(^|[?&])utm_source=google([&#]|$)' OR ${url} ~ '(^|[?&])gclid=' OR ${refHost} LIKE '%google.%' THEN 'google'
+      WHEN ${url} ~ '(^|[?&])utm_source=bing([&#]|$)' OR ${url} ~ '(^|[?&])msclkid=' OR ${refHost} LIKE '%bing.%' THEN 'bing'
+      WHEN ${url} ~ '(^|[?&])utm_source=baidu([&#]|$)' OR ${refHost} LIKE '%baidu.%' THEN 'baidu'
+      WHEN ${url} ~ '(^|[?&])utm_source=yahoo([&#]|$)' OR ${refHost} LIKE '%yahoo.%' THEN 'yahoo'
+      WHEN ${url} ~ '(^|[?&])utm_source=duckduckgo([&#]|$)' OR ${refHost} LIKE '%duckduckgo.%' THEN 'duckduckgo'
+      WHEN ${url} ~ '(^|[?&])utm_source=yandex([&#]|$)' OR ${refHost} LIKE '%yandex.%' THEN 'yandex'
+      WHEN ${url} ~ '(^|[?&])utm_source=facebook([&#]|$)' OR ${refHost} LIKE '%facebook.%' THEN 'facebook'
+      WHEN ${url} ~ '(^|[?&])utm_source=instagram([&#]|$)' OR ${refHost} LIKE '%instagram.%' THEN 'instagram'
+      WHEN ${url} ~ '(^|[?&])utm_source=twitter([&#]|$)' OR ${url} ~ '(^|[?&])utm_source=x([&#]|$)' OR ${refHost} LIKE '%t.co%' OR ${refHost} LIKE '%twitter.%' OR ${refHost} LIKE '%x.com%' THEN 'x'
+      WHEN ${url} ~ '(^|[?&])utm_source=linkedin([&#]|$)' OR ${refHost} LIKE '%linkedin.%' THEN 'linkedin'
+      WHEN ${url} ~ '(^|[?&])utm_source=reddit([&#]|$)' OR ${refHost} LIKE '%reddit.%' THEN 'reddit'
+      WHEN ${url} ~ '(^|[?&])utm_source=direct([&#]|$)' THEN 'direct'
+      WHEN ${refHost} = '' THEN 'direct'
+      ELSE ${refHost}
+    END
+  `)
+}
+
+export function localTimestampSql(alias, column = 'createdAt') {
+  return Prisma.raw(`timezone('${ADMIN_TIMEZONE}', "${alias}"."${column}")`)
+}
+
+export function localDateSql(dateValue) {
+  return Prisma.sql`timezone(${ADMIN_TIMEZONE}, ${dateValue}::timestamptz)`
+}
+
 function devicePredicateSql(alias, device) {
   const uaExpr = `LOWER(COALESCE("${alias}"."userAgent", "${alias}"."ua", ''))`
 
@@ -106,7 +153,7 @@ export function buildTrafficWhereSql(filters, alias = 't') {
   ]
 
   if (filters.channel) {
-    clauses.push(Prisma.sql`COALESCE(${Prisma.raw(`"${alias}"."utm_source"`)}, '') = ${filters.channel}`)
+    clauses.push(Prisma.sql`${trafficChannelSql(alias)} = ${filters.channel.toLowerCase()}`)
   }
 
   const deviceClause = devicePredicateSql(alias, filters.device)
@@ -126,6 +173,7 @@ export function formatTrafficFilters(filters) {
     range: filters.range,
     channel: filters.channel,
     device: filters.device,
+    timezone: ADMIN_TIMEZONE,
     startAt: filters.startAt,
     endAt: filters.endAt,
     page: filters.page,
