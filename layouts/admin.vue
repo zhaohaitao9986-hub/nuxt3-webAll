@@ -1,6 +1,7 @@
 <script setup>
 import {
   ArrowDown,
+  DataAnalysis,
   FolderOpened,
   MagicStick,
   Odometer,
@@ -13,6 +14,7 @@ const route = useRoute()
 
 const titleMap = {
   '/admin/dashboard': '仪表盘',
+  '/admin/traffic': '流量分析',
   '/admin/tools': 'AI 工具管理',
   '/admin/categories': '二级分类',
   '/admin/categories/level1': '一级分类',
@@ -40,6 +42,9 @@ const activeMenu = computed(() => {
   const p = route.path
   if (p.startsWith('/admin/tools')) {
     return '/admin/tools'
+  }
+  if (p.startsWith('/admin/traffic')) {
+    return '/admin/traffic'
   }
   if (p.startsWith('/admin/categories/level1')) {
     return '/admin/categories/level1'
@@ -96,6 +101,10 @@ function handleCommand(cmd) {
         <el-menu-item index="/admin/tools">
           <el-icon><MagicStick /></el-icon>
           <span>AI 工具管理</span>
+        </el-menu-item>
+        <el-menu-item index="/admin/traffic">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>流量分析</span>
         </el-menu-item>
         <el-sub-menu index="sub-categories">
           <template #title>

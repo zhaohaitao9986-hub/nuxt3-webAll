@@ -140,3 +140,53 @@ model OperationLog {
 
   @@map("operation_logs")
 }
+
+
+
+// 数据库表名：traffic_logs
+model TrafficLog {
+  id          BigInt    @id @default(autoincrement())
+  // 创建时间：应用层在 /api/traffic 中显式按 UTC+8（Asia/Shanghai）写入；未走 API 的插入仍可用 @default(now())
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3) @map("createdAt")
+
+  // 日志元数据
+  level       Int
+  pid         Int
+  hostname    String    @db.VarChar(255)
+
+  // 用户与会话标识
+  uid         String    @db.VarChar(255)
+  sid         String    @db.VarChar(255)
+
+  // 行为类型
+  type        String    @db.VarChar(50)
+
+  // 流量来源与页面信息
+  utmSource   String?   @db.VarChar(255) @map("utm_source")
+  url         String    @db.Text
+  ref         String?   @db.Text
+  ts          BigInt
+
+  // 停留时长
+  pageStay    Int       @default(0) @map("page_stay")
+  sessionStay Int       @default(0) @map("session_stay")
+
+  // 跳转路径
+  from        String?   @db.Text
+  to          String?   @db.Text
+
+  // 用户设备信息
+  ip          String    @db.VarChar(100)
+  ua          String    @db.Text
+  userAgent   String    @db.Text
+
+  // 索引配置（对应数据库里的索引）
+  @@index([uid])
+  @@index([sid])
+  @@index([type])
+  @@index([createdAt])
+  @@index([ts])
+
+  // 映射到数据库的表名
+  @@map("traffic_logs")
+}

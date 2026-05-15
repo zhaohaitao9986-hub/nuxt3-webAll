@@ -1,5 +1,5 @@
 <script setup>
-import { MagicStick, FolderOpened, User, Document } from '@element-plus/icons-vue'
+import { MagicStick, FolderOpened, User, Document, DataAnalysis } from '@element-plus/icons-vue'
 
 definePageMeta({
   layout: 'admin',
@@ -79,6 +79,9 @@ const cards = computed(() => {
       <el-space wrap>
         <el-button type="primary" :icon="MagicStick" @click="navigateTo('/admin/tools')">
           工具列表
+        </el-button>
+        <el-button :icon="DataAnalysis" @click="navigateTo('/admin/traffic')">
+          流量分析
         </el-button>
         <el-button :icon="Document" @click="navigateTo('/admin/categories')">
           二级分类
