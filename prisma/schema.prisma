@@ -104,6 +104,21 @@ model AiTool {
   use_cases           String[] 
   company_info        String? 
   recommend_learn     String[] 
+  tool_status         String?
+
+  // ==================== ✨ 本轮 Programmatic SEO 新增字段 ====================
+  seo_meta_title       String?   @db.VarChar(255)  // 独立Meta标题
+  seo_meta_description String?   @db.VarChar(500)  // 独立Meta描述
+  seo_meta_keywords    String[]                    // 独立Meta关键词数组
+  
+  expanded_about       String?   @db.Text          // DeepSeek 洗出的硬核评测长文本
+  built_for_details    Json?                       // 结构化职业场景 (JSONB)
+  features_details     Json?                       // 结构化功能卡片 (JSONB)
+  expanded_usecases    Json?                       // 结构化应用场景卡片 (JSONB)
+  expanded_faqs        Json?                       // 结构化长尾词FAQ (JSONB)
+  
+  seo_version          Int       @default(0)       // 版本控制与断点续传（0:未处理, 1:DeepSeek已洗）
+  // =========================================================================
 
   // 多对多关联（已修复）
   toolCategories      AiToolCategory[]
