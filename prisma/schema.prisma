@@ -118,6 +118,7 @@ model AiTool {
   expanded_faqs        Json?                       // 结构化长尾词FAQ (JSONB)
   
   seo_version          Int       @default(0)       // 版本控制与断点续传（0:未处理, 1:DeepSeek已洗）
+  rank                 Int
   // =========================================================================
 
   // 多对多关联（已修复）
