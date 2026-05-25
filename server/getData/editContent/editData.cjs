@@ -919,7 +919,9 @@ async function main() {
   }
 
   const testConcurrency = mode === 'TEST' && limitCount > 1000 ? CONCURRENCY : 1;
-  const queue = new PQueue({ concurrency: mode === 'TEST' ? testConcurrency : CONCURRENCY });
+  const activeConcurrency = mode === 'TEST' ? testConcurrency : CONCURRENCY;
+  const queue = new PQueue({ concurrency: activeConcurrency });
+  console.log(`⚙️ 当前模式: ${mode} | 当前并发数: ${activeConcurrency} | 当前批次数量: ${mode === 'TEST' ? limitCount : DEFAULT_BATCH_SIZE}`);
   let processedCount = 0;
 
   while (true) {
