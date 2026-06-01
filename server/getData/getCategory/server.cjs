@@ -121,7 +121,7 @@ async function saveToDatabase(data) {
         name: item.name,
         handle,
         sort: 0,
-        is_active: true
+        isActive: true
       }
     });
 
@@ -146,17 +146,17 @@ async function saveToDatabase(data) {
           where: { handle },
           update: {
             name: cat2.name,
-            tool_count: cat2.tool_count,
+            toolCount: cat2.tool_count,
             level1Id: parentId, // 关键：绑定正确的父ID
-            is_active: true
+            isActive: true
           },
           create: {
             name: cat2.name,
             handle,
-            tool_count: cat2.tool_count,
+            toolCount: cat2.tool_count,
             level1Id: parentId,
             sort: 0,
-            is_active: true
+            isActive: true
           }
         });
 

@@ -45,7 +45,7 @@ async function crawlCategoryDetail(categoryHandle) {
     // 获取分类基础信息
     const category = await prisma.categoryLevel2.findUnique({
         where: { handle: categoryHandle },
-        select: { id: true, handle: true, tool_count: true, name: true }
+        select: { id: true, handle: true, toolCount: true, name: true }
     });
 
     if (!category) {
@@ -54,7 +54,7 @@ async function crawlCategoryDetail(categoryHandle) {
         return;
     }
 
-    const totalTools = category?.tool_count || 0;
+    const totalTools = category?.toolCount || 0;
     const maxPages = Math.ceil(totalTools / 20); 
     console.log(`📊 该分类共有约 ${totalTools} 个工具，预计需爬取 ${maxPages} 页`);
 
@@ -182,7 +182,7 @@ async function updateToolsImage(tools) {
                 where: { handle: tool.handle },
                 data: { 
                     image: tool.image, 
-                    website_logo: tool.image 
+                    websiteLogo: tool.image 
                 }
             });
         } catch (e) {

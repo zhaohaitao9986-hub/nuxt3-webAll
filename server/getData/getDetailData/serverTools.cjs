@@ -56,12 +56,12 @@ async function scrapeAndUpdateTool(handle, workerId) {
 
         // 提取数据：内部所有报错全部捕获
         const scrapedData = await extractData(page).catch(() => ({}));
-        const safeData = { ...scrapedData, month_visited_count: scrapedData.month_visited_count ?? 0 };
+        const safeData = { ...scrapedData, monthVisitedCount: scrapedData.monthVisitedCount ?? 0 };
 
         await prisma.aiTool.update({ where: { handle }, data: safeData });
         console.log(`[W${workerId}] ✅ 完成: ${handle} | FAQ数量: ${(scrapedData.faq || []).length}`);
 
-        return { success: true, handle, isAddTimeEmpty: !scrapedData.add_time };
+        return { success: true, handle, isAddTimeEmpty: !scrapedData.addTime };
     } catch (e) {
         // 所有超时/加载失败/报错 全部走到这里，不会崩溃程序
         console.log(`[W${workerId}] ⏹️ 跳过: ${handle} | 原因: ${e.message.slice(0, 100)}`);
@@ -88,8 +88,8 @@ function parseVisitorsNumber(text) {
 // ==================== 数据提取（全部加了安全捕获）====================
 async function extractData(page) {
     const result = {
-        add_time: '', website_type: [], social_email: [], faq: [], use_cases: [],
-        company_info: '', tags: [], recommend_learn: [], for_jobs: [], month_visited_count: 0
+        addTime: '', websiteType: [], socialEmail: [], faq: [], useCases: [],
+        companyInfo: '', tags: [], recommendLearn: [], forJobs: [], monthVisitedCount: 0
     };
 
     try {
@@ -103,13 +103,13 @@ async function extractData(page) {
                     const labelText = await page.evaluate(el => el.textContent.trim(), labelEl);
                     if (labelText === 'Added on:') {
                         const valueEl = await targetRow.$('.table-cell:not(.font-semibold)');
-                        if (valueEl) result.add_time = await page.evaluate(el => el.textContent.trim(), valueEl);
+                        if (valueEl) result.addTime = await page.evaluate(el => el.textContent.trim(), valueEl);
                     }
                 }
             }
 
             const typeTags = await topSection.$$('div.text-sm.text-gray-1000.border.border-gray-1300.max-w-max.truncate.rounded-2xl.t-label');
-            result.website_type = await Promise.all(typeTags.map(tag => page.evaluate(el => el.textContent.trim(), tag)));
+            result.websiteType = await Promise.all(typeTags.map(tag => page.evaluate(el => el.textContent.trim(), tag)));
 
             const socialRows = await topSection.$$('.table-row');
             for (const row of socialRows) {
@@ -118,7 +118,7 @@ async function extractData(page) {
                     const text = await page.evaluate(el => el.textContent.trim(), labelCell);
                     if (text === 'Social & Email:') {
                         const links = await row.$$('a');
-                        result.social_email = await Promise.all(links.map(a => page.evaluate(el => el.href, a)));
+                        result.socialEmail = await Promise.all(links.map(a => page.evaluate(el => el.href, a)));
                         break;
                     }
                 }
@@ -135,7 +135,7 @@ async function extractData(page) {
                             const spanEl = await valueCell.$('span');
                             if (spanEl) {
                                 const rawText = await page.evaluate(el => el.textContent.trim(), spanEl);
-                                result.month_visited_count = parseVisitorsNumber(rawText);
+                                result.monthVisitedCount = parseVisitorsNumber(rawText);
                             }
                         }
                     }
@@ -180,13 +180,13 @@ async function extractData(page) {
                         }
                     } else if (h2Text.includes('Use Cases')) {
                         const h3List = await contentDiv.$$('h3');
-                        result.use_cases = await Promise.all(h3List.map(h3 => page.evaluate(el => el.textContent.trim(), h3)));
+                        result.useCases = await Promise.all(h3List.map(h3 => page.evaluate(el => el.textContent.trim(), h3)));
                     }
 
                     const sectionHtml = await page.evaluate(el => el.innerHTML, section);
                     if (sectionHtml.includes('contact ') || sectionHtml.includes('Login ')) {
                         const ulElement = await section.$('ul');
-                        if (ulElement) result.company_info = await page.evaluate(el => el.innerHTML, ulElement);
+                        if (ulElement) result.companyInfo = await page.evaluate(el => el.innerHTML, ulElement);
                     }
                 }
             }
@@ -205,10 +205,10 @@ async function extractData(page) {
                 result.tags = await Promise.all(tagSpans.map(span => page.evaluate(el => el.textContent.trim(), span)));
             } else if (headerText.includes('Recommend')) {
                 const links = await contentDiv.$$('a');
-                result.recommend_learn = await Promise.all(links.map(a => page.evaluate(el => el.textContent.trim(), a)));
+                result.recommendLearn = await Promise.all(links.map(a => page.evaluate(el => el.textContent.trim(), a)));
             } else if (headerText.includes('Jobs')) {
                 const jobSpans = await contentDiv.$$('a span:first-child');
-                result.for_jobs = await Promise.all(jobSpans.map(span => page.evaluate(el => el.textContent.trim(), span)));
+                result.forJobs = await Promise.all(jobSpans.map(span => page.evaluate(el => el.textContent.trim(), span)));
             }
         }
     } catch (e) {

@@ -13,7 +13,7 @@ import prisma from '~/server/utils/prisma'
 export default defineCachedEventHandler(
   async (event) => {
     const rows = await prisma.categoryLevel1.findMany({
-      where: { is_active: true },
+      where: { isActive: true },
       orderBy: [{ sort: 'desc' }, { id: 'asc' }],
       select: {
         id: true,
@@ -21,14 +21,14 @@ export default defineCachedEventHandler(
         handle: true,
         _count: {
           select: {
-            level2Categories: { where: { is_active: true } },
+            level2Categories: { where: { isActive: true } },
           },
         },
         level2Categories: {
-          where: { is_active: true },
-          orderBy: [{ tool_count: 'desc' }, { sort: 'desc' }],
+          where: { isActive: true },
+          orderBy: [{ toolCount: 'desc' }, { sort: 'desc' }],
           take: 4,
-          select: { id: true, name: true, handle: true, tool_count: true },
+          select: { id: true, name: true, handle: true, toolCount: true },
         },
       },
     })
@@ -43,7 +43,7 @@ export default defineCachedEventHandler(
         name: s.name,
         handle: s.handle,
         parentHandle: l1.handle,
-        toolCount: s.tool_count || 0,
+        toolCount: s.toolCount || 0,
       })),
     }))
 

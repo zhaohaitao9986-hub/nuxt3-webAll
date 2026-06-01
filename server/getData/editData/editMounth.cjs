@@ -1,11 +1,11 @@
 /**
- * 将 ai_tools.month_visited_count = 0 的记录按规则写回估算值。
+ * 将 aiTools.monthVisitedCount = 0 的记录按规则写回估算值。
  *
  * 规则：
- * 1. collected_count 与 tool_info_review 均存在且均不为 0：
- *    month_visited_count = collected_count × tool_info_review × tool_info_review × 300
- * 2. collected_count 为 0，且 tool_info_review 存在：
- *    month_visited_count = tool_info_review × 200 × [1,10] 随机整数
+ * 1. collectedCount 与 toolInfoReview 均存在且均不为 0：
+ *    monthVisitedCount = collectedCount × toolInfoReview × toolInfoReview × 300
+ * 2. collectedCount 为 0，且 toolInfoReview 存在：
+ *    monthVisitedCount = toolInfoReview × 200 × [1,10] 随机整数
  *
  * 其它组合（例如 collected > 0 但 rating 为 0/null）：跳过不更新。
  *
@@ -25,12 +25,12 @@ function randomInt1To10() {
 }
 
 /**
- * @param {{ collected_count: number | null, tool_info_review: import('@prisma/client/runtime/library').Decimal | null }} row
+ * @param {{ collectedCount: number | null, toolInfoReview: import('@prisma/client/runtime/library').Decimal | null }} row
  * @returns {bigint | null} 无法计算则 null（跳过）
  */
 function computeMonthVisited(row) {
-  const collected = Number(row.collected_count ?? 0)
-  const reviewRaw = row.tool_info_review
+  const collected = Number(row.collectedCount ?? 0)
+  const reviewRaw = row.toolInfoReview
   const review = reviewRaw == null ? null : Number(reviewRaw)
 
   const rule1 =
@@ -56,12 +56,12 @@ function computeMonthVisited(row) {
 
 async function main() {
   const rows = await prisma.aiTool.findMany({
-    where: { month_visited_count: ZERO },
+    where: { monthVisitedCount: ZERO },
     select: {
       id: true,
       handle: true,
-      collected_count: true,
-      tool_info_review: true,
+      collectedCount: true,
+      toolInfoReview: true,
     },
   })
 
@@ -81,7 +81,7 @@ async function main() {
     }
     await prisma.aiTool.update({
       where: { id: row.id },
-      data: { month_visited_count: next },
+      data: { monthVisitedCount: next },
     })
     updated += 1
     console.log(`[3/4] 更新完成: ${row.handle} | 已更新 ${updated} 条，跳过 ${skipped} 条`)

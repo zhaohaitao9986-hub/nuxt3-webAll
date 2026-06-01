@@ -14,11 +14,11 @@ const TOOL_SELECT = {
   name: true,
   description: true,
   website: true,
-  website_logo: true,
-  month_visited_count: true,
-  collected_count: true,
-  is_free: true,
-  tool_info_review: true,
+  websiteLogo: true,
+  monthVisitedCount: true,
+  collectedCount: true,
+  isFree: true,
+  toolInfoReview: true,
   pricing: true,
   tags: true,
 }
@@ -29,12 +29,12 @@ const shapeTool = (t, i = 0) => ({
   handle: t.handle,
   name: t.name,
   shortDesc: t.description || '',
-  iconUrl: t.website_logo || null,
+  iconUrl: t.websiteLogo || null,
   website: t.website || null,
-  isFree: Boolean(t.is_free),
-  rating: t.tool_info_review ? Number(t.tool_info_review) : null,
-  monthlyVisits: Number(t.month_visited_count || 0),
-  collected: Number(t.collected_count || 0),
+  isFree: Boolean(t.isFree),
+  rating: t.toolInfoReview ? Number(t.toolInfoReview) : null,
+  monthlyVisits: Number(t.monthVisitedCount || 0),
+  collected: Number(t.collectedCount || 0),
   pricing: Array.isArray(t.pricing) ? t.pricing : [],
   tags: Array.isArray(t.tags) ? t.tags.slice(0, 3) : [],
   isAd: false,
@@ -74,12 +74,12 @@ export default defineEventHandler(async (event) => {
     switch (price) {
       case 'free':
         // 纯免费：is_free=true 且无 pricing 档位
-        return { is_free: true, pricing: { isEmpty: true } }
+        return { isFree: true, pricing: { isEmpty: true } }
       case 'freemium':
         // 免费+付费档位并存
-        return { is_free: true, pricing: { isEmpty: false } }
+        return { isFree: true, pricing: { isEmpty: false } }
       case 'pro':
-        return { is_free: false }
+        return { isFree: false }
       default:
         return {}
     }
@@ -91,13 +91,13 @@ export default defineEventHandler(async (event) => {
   const orderBy = (() => {
     switch (sort) {
       case 'rating':
-        return [{ tool_info_review: 'desc' }, { month_visited_count: 'desc' }]
+        return [{ toolInfoReview: 'desc' }, { monthVisitedCount: 'desc' }]
       case 'new':
-        return [{ created_at: 'desc' }, { month_visited_count: 'desc' }]
+        return [{ createdAt: 'desc' }, { monthVisitedCount: 'desc' }]
       case 'relevance':
       default:
         // 没有 FTS 的情况下：把流量作为相关性兜底（热 = 最匹配用户意图）
-        return [{ month_visited_count: 'desc' }, { collected_count: 'desc' }]
+        return [{ monthVisitedCount: 'desc' }, { collectedCount: 'desc' }]
     }
   })()
 
@@ -113,14 +113,14 @@ export default defineEventHandler(async (event) => {
     }),
     // 相似分类：固定 10 个（流量分发用）
     prisma.categoryLevel2.findMany({
-      where: { is_active: true },
-      orderBy: [{ tool_count: 'desc' }, { sort: 'asc' }],
+      where: { isActive: true },
+      orderBy: [{ toolCount: 'desc' }, { sort: 'asc' }],
       take: SIMILAR_CATS_TAKE,
       select: {
         id: true,
         name: true,
         handle: true,
-        tool_count: true,
+        toolCount: true,
         level1: { select: { handle: true } },
       },
     }),
@@ -149,8 +149,8 @@ export default defineEventHandler(async (event) => {
 
   if (needFallback) {
     const rawPopular = await prisma.aiTool.findMany({
-      where: { website_logo: { not: null } },
-      orderBy: [{ month_visited_count: 'desc' }, { collected_count: 'desc' }],
+      where: { websiteLogo: { not: null } },
+      orderBy: [{ monthVisitedCount: 'desc' }, { collectedCount: 'desc' }],
       take: POPULAR_FALLBACK,
       select: TOOL_SELECT,
     })
@@ -177,7 +177,7 @@ export default defineEventHandler(async (event) => {
       id: c.id,
       name: c.name,
       handle: c.handle,
-      toolCount: c.tool_count || 0,
+      toolCount: c.toolCount || 0,
       parentHandle: c.level1?.handle || '',
     })),
     trendingTags: TRENDING_TAGS,

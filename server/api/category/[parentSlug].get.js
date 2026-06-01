@@ -24,8 +24,8 @@ const L2_SELECT = {
   id: true,
   name: true,
   handle: true,
-  tool_count: true,
-  what_is_summary: true,
+  toolCount: true,
+  whatIsSummary: true,
 }
 
 const TOOL_SELECT = {
@@ -34,12 +34,12 @@ const TOOL_SELECT = {
   name: true,
   description: true,
   website: true,
-  website_logo: true,
+  websiteLogo: true,
   image: true,
-  month_visited_count: true,
-  is_free: true,
-  is_ad: true,
-  tool_info_review: true,
+  monthVisitedCount: true,
+  isFree: true,
+  isAd: true,
+  toolInfoReview: true,
   pricing: true,
   tags: true,
 }
@@ -64,8 +64,8 @@ export default defineCachedEventHandler(
         name: true,
         handle: true,
         level2Categories: {
-          where: { is_active: true },
-          select: { id: true, tool_count: true },
+          where: { isActive: true },
+          select: { id: true, toolCount: true },
         },
       },
     })
@@ -76,22 +76,22 @@ export default defineCachedEventHandler(
 
     const l2Ids = l1.level2Categories.map((x) => x.id)
     const totalTools = l1.level2Categories.reduce(
-      (sum, x) => sum + (x.tool_count || 0),
+      (sum, x) => sum + (x.toolCount || 0),
       0,
     )
 
     // ---------- 3. 并行：L2 分页列表 / L2 总数 / 热门工具 ----------
     const [subCatsRaw, subTotal, topToolsRaw] = await Promise.all([
       prisma.categoryLevel2.findMany({
-        where: { level1Id: l1.id, is_active: true },
-        orderBy: [{ tool_count: 'desc' }, { sort: 'desc' }, { id: 'asc' }],
+        where: { level1Id: l1.id, isActive: true },
+        orderBy: [{ toolCount: 'desc' }, { sort: 'desc' }, { id: 'asc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
         select: L2_SELECT,
       }),
 
       prisma.categoryLevel2.count({
-        where: { level1Id: l1.id, is_active: true },
+        where: { level1Id: l1.id, isActive: true },
       }),
 
       // 空 L1（没有任何 L2）时避免 `in: []` 无意义查询
@@ -103,9 +103,9 @@ export default defineCachedEventHandler(
               },
             },
             orderBy: [
-              { is_ad: 'desc' }, // 付费/高佣金位置优先
-              { month_visited_count: 'desc' }, // 再按流量
-              { collected_count: 'desc' },
+              { isAd: 'desc' },
+              { monthVisitedCount: 'desc' },
+              { collectedCount: 'desc' },
             ],
             take: TOP_TOOLS_TAKE,
             select: TOOL_SELECT,
@@ -119,8 +119,8 @@ export default defineCachedEventHandler(
       name: c.name,
       handle: c.handle,
       parentHandle: l1.handle,
-      toolCount: c.tool_count || 0,
-      summary: (c.what_is_summary || '').slice(0, 120),
+      toolCount: c.toolCount || 0,
+      summary: (c.whatIsSummary || '').slice(0, 120),
     }))
 
     const topTools = topToolsRaw.map((t) => ({
@@ -129,12 +129,12 @@ export default defineCachedEventHandler(
       name: t.name,
       description: t.description || '',
       website: t.website || null,
-      website_logo: t.website_logo || null,
+      website_logo: t.websiteLogo || null,
       image: t.image || null,
-      month_visited_count: Number(t.month_visited_count || 0),
-      is_free: Boolean(t.is_free),
-      is_ad: Boolean(t.is_ad),
-      rating: t.tool_info_review ? Number(t.tool_info_review) : null,
+      month_visited_count: Number(t.monthVisitedCount || 0),
+      is_free: Boolean(t.isFree),
+      is_ad: Boolean(t.isAd),
+      rating: t.toolInfoReview ? Number(t.toolInfoReview) : null,
       pricing: Array.isArray(t.pricing) ? t.pricing : [],
       tags: Array.isArray(t.tags) ? t.tags.slice(0, 3) : [],
       isAd: false, // 列表条目类型标记（区别于下方原生广告位）

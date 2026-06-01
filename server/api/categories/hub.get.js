@@ -29,7 +29,7 @@ export default defineCachedEventHandler(
     const [level1Raw, trendingRaw, hotTags] = await Promise.all([
       // ---------- 20+ Level1 + 每个最多 6 个 Level2 ----------
       prisma.categoryLevel1.findMany({
-        where: { is_active: true },
+        where: { isActive: true },
         orderBy: [{ sort: 'desc' }, { id: 'asc' }],
         select: {
           id: true,
@@ -39,19 +39,19 @@ export default defineCachedEventHandler(
           _count: {
             select: {
               level2Categories: {
-                where: { is_active: true },
+                where: { isActive: true },
               },
             },
           },
           level2Categories: {
-            where: { is_active: true },
-            orderBy: [{ tool_count: 'desc' }, { sort: 'desc' }],
+            where: { isActive: true },
+            orderBy: [{ toolCount: 'desc' }, { sort: 'desc' }],
             take: TOP_SUBS_PER_PARENT,
             select: {
               id: true,
               name: true,
               handle: true,
-              tool_count: true,
+              toolCount: true,
             },
           },
         },
@@ -60,19 +60,19 @@ export default defineCachedEventHandler(
       // ---------- Trending / 高收益 niches（跨所有 Level1） ----------
       prisma.categoryLevel2.findMany({
         where: {
-          is_active: true,
+          isActive: true,
           OR: [
             { handle: { in: CURATED_HIGH_CPC_HANDLES } },
-            { tool_count: { gt: 0 } },
+            { toolCount: { gt: 0 } },
           ],
         },
-        orderBy: [{ tool_count: 'desc' }, { sort: 'desc' }],
+        orderBy: [{ toolCount: 'desc' }, { sort: 'desc' }],
         take: TRENDING_NICHES_TAKE,
         select: {
           id: true,
           name: true,
           handle: true,
-          tool_count: true,
+          toolCount: true,
           level1: {
             select: { name: true, handle: true },
           },
@@ -81,8 +81,8 @@ export default defineCachedEventHandler(
 
       // ---------- Hero 下方的热门搜索 tags ----------
       prisma.categoryLevel2.findMany({
-        where: { is_active: true },
-        orderBy: [{ tool_count: 'desc' }],
+        where: { isActive: true },
+        orderBy: [{ toolCount: 'desc' }],
         take: HERO_TAGS_TAKE,
         select: {
           id: true,
@@ -98,11 +98,11 @@ export default defineCachedEventHandler(
     // 这里选择一次性 groupBy level1Id -> 一次请求解决
     const toolCountsByL1 = await prisma.categoryLevel2.groupBy({
       by: ['level1Id'],
-      where: { is_active: true },
-      _sum: { tool_count: true },
+      where: { isActive: true },
+      _sum: { toolCount: true },
     })
     const totalToolsMap = new Map(
-      toolCountsByL1.map((r) => [r.level1Id, r._sum.tool_count || 0]),
+      toolCountsByL1.map((r) => [r.level1Id, r._sum.toolCount || 0]),
     )
 
     const level1 = level1Raw.map((l1) => ({
@@ -116,7 +116,7 @@ export default defineCachedEventHandler(
         id: s.id,
         name: s.name,
         handle: s.handle,
-        toolCount: s.tool_count || 0,
+        toolCount: s.toolCount || 0,
       })),
     }))
 
@@ -124,7 +124,7 @@ export default defineCachedEventHandler(
       id: t.id,
       name: t.name,
       handle: t.handle,
-      toolCount: t.tool_count || 0,
+      toolCount: t.toolCount || 0,
       parentName: t.level1?.name || '',
       parentHandle: t.level1?.handle || '',
     }))

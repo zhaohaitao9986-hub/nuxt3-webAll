@@ -20,7 +20,7 @@ export default defineEventHandler(async () => {
   // Query all level1 categories with nested level2 and tool counts
   const level1Categories = await prisma.categoryLevel1.findMany({
     where: {
-      is_active: true,
+      isActive: true,
     },
     orderBy: {
       sort: 'desc',
@@ -28,7 +28,7 @@ export default defineEventHandler(async () => {
     include: {
       level2Categories: {
         where: {
-          is_active: true,
+          isActive: true,
         },
         orderBy: {
           sort: 'desc',

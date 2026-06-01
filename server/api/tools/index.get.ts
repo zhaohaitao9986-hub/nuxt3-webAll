@@ -31,7 +31,7 @@ export default defineEventHandler(async (event) => {
             some: {
               category: {
                 handle: category,
-                is_active: true,
+                isActive: true,
               },
             },
           },
@@ -45,8 +45,8 @@ export default defineEventHandler(async (event) => {
       where,
       orderBy:
         sort === 'new'
-          ? [{ created_at: 'desc' }]
-          : [{ month_visited_count: 'desc' }, { created_at: 'desc' }],
+          ? [{ createdAt: 'desc' }]
+          : [{ monthVisitedCount: 'desc' }, { createdAt: 'desc' }],
       skip: (page - 1) * pageSize,
       take: pageSize,
       select: {
@@ -55,10 +55,10 @@ export default defineEventHandler(async (event) => {
         name: true,
         description: true,
         website: true,
-        website_logo: true,
-        month_visited_count: true,
-        collected_count: true,
-        is_free: true,
+        websiteLogo: true,
+        monthVisitedCount: true,
+        collectedCount: true,
+        isFree: true,
         toolCategories: {
           select: {
             category: {
@@ -73,13 +73,13 @@ export default defineEventHandler(async (event) => {
       },
     }),
     prisma.categoryLevel2.findMany({
-      where: { is_active: true },
-      orderBy: [{ sort: 'asc' }, { tool_count: 'desc' }],
+      where: { isActive: true },
+      orderBy: [{ sort: 'asc' }, { toolCount: 'desc' }],
       take: 12,
       select: {
         name: true,
         handle: true,
-        tool_count: true,
+        toolCount: true,
       },
     }),
   ])
@@ -89,12 +89,29 @@ export default defineEventHandler(async (event) => {
     pageSize,
     total,
     totalPages: Math.ceil(total / pageSize),
-    categories,
+    categories: categories.map((category) => ({
+      name: category.name,
+      handle: category.handle,
+      toolCount: Number(category.toolCount || 0),
+      tool_count: Number(category.toolCount || 0),
+    })),
     tools: tools.map((tool) => {
-      const { toolCategories, ...rest } = tool
+      const { toolCategories } = tool
       return {
-        ...rest,
-        month_visited_count: Number(tool.month_visited_count || 0),
+        id: tool.id,
+        handle: tool.handle,
+        name: tool.name,
+        description: tool.description,
+        website: tool.website,
+        websiteLogo: tool.websiteLogo || null,
+        website_logo: tool.websiteLogo || null,
+        monthVisitedCount: Number(tool.monthVisitedCount || 0),
+        month_visited_count: Number(tool.monthVisitedCount || 0),
+        collectedCount: Number(tool.collectedCount || 0),
+        collected_count: Number(tool.collectedCount || 0),
+        isFree: Boolean(tool.isFree),
+        is_free: Boolean(tool.isFree),
+        is_ad: false,
         categories: toolCategories.map((item) => item.category),
       }
     }),

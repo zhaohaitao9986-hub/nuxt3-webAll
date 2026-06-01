@@ -140,7 +140,7 @@ async function runJob() {
             try {
                 await prisma.aiTool.update({
                     where: { id: tool.id },
-                    data: { image: newUrl, website_logo: newUrl }
+                    data: { image: newUrl, websiteLogo: newUrl }
                 });
                 processedCount++;
                 console.log(`✅ [${processedCount}/${pendingCount}] ${tool.handle} (${progress}%)`);

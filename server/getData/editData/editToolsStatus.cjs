@@ -34,7 +34,7 @@ function isViolated(tool) {
     if (!tool.handle || !handleRegex.test(tool.handle)) return true;
 
     // B. 检查描述和摘要是否包含黑产词
-    const textToScan = `${tool.description || ''} ${tool.what_is_summary || ''}`;
+    const textToScan = `${tool.description || ''} ${tool.whatIsSummary || ''}`;
     if (forbiddenRegex.test(textToScan)) return true;
 
     return false;
@@ -54,7 +54,7 @@ async function scanAndClean() {
                 id: true,
                 handle: true,
                 description: true,
-                what_is_summary: true,
+                whatIsSummary: true,
             }
         });
 
@@ -76,7 +76,7 @@ async function scanAndClean() {
         if (offlineIds.length > 0) {
             await prisma.aiTool.updateMany({
                 where: { id: { in: offlineIds } },
-                data: { tool_status: 'OFFLINE' }
+                data: { toolStatus: 'OFFLINE' }
             });
             console.log('❌ 违规数据已标记为 OFFLINE');
         }
@@ -85,7 +85,7 @@ async function scanAndClean() {
         if (onlineIds.length > 0) {
             await prisma.aiTool.updateMany({
                 where: { id: { in: onlineIds } },
-                data: { tool_status: 'ONLINE' }
+                data: { toolStatus: 'ONLINE' }
             });
             console.log('✅ 合规数据已标记为 ONLINE');
         }

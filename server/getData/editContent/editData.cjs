@@ -309,7 +309,7 @@ function choosePrimaryCategory(tool) {
 
 function buildSummary(tool, normalized) {
   const summaryParts = [
-    normalizeParagraphText(tool.what_is_summary),
+    normalizeParagraphText(tool.whatIsSummary),
     normalizeParagraphText(tool.description),
   ].filter(Boolean);
 
@@ -382,13 +382,13 @@ function normalizeToolInput(tool, totalCount) {
     categoryL2,
     features: uniqueNonEmpty(tool.feature, 8),
     pricing: uniqueNonEmpty((tool.pricing || []).map(stripHtml), 4),
-    useCases: uniqueNonEmpty(tool.use_cases, 6),
-    forJobs: uniqueNonEmpty(tool.for_jobs, 6),
+    useCases: uniqueNonEmpty(tool.useCases, 6),
+    forJobs: uniqueNonEmpty(tool.forJobs, 6),
     tags: uniqueNonEmpty(tool.tags, 8),
-    websiteTypes: uniqueNonEmpty(tool.website_type, 4),
-    recommendLearn: uniqueNonEmpty(tool.recommend_learn, 6),
+    websiteTypes: uniqueNonEmpty(tool.websiteType, 4),
+    recommendLearn: uniqueNonEmpty(tool.recommendLearn, 6),
     faq: normalizeFaqInput(tool.faq).slice(0, 5),
-    companyInfo: stripHtml(tool.company_info).slice(0, 1200),
+    companyInfo: stripHtml(tool.companyInfo).slice(0, 1200),
   };
 
   normalized.summary = buildSummary(tool, normalized);
@@ -872,19 +872,19 @@ async function processToolWithAI(tool, totalCount) {
 function buildFailureUpdateData(error) {
   const draft = error?.draft;
   if (!draft) {
-    return { seo_version: -1 };
+    return { seoVersion: -1 };
   }
 
   return {
-    seo_meta_title: draft.seo_meta_title || null,
-    seo_meta_description: draft.seo_meta_description || null,
-    seo_meta_keywords: Array.isArray(draft.seo_meta_keywords) ? draft.seo_meta_keywords : [],
-    expanded_about: draft.expanded_about || null,
-    built_for_details: Array.isArray(draft.built_for_details) ? draft.built_for_details : [],
-    features_details: Array.isArray(draft.features_details) ? draft.features_details : [],
-    expanded_usecases: Array.isArray(draft.expanded_usecases) ? draft.expanded_usecases : [],
-    expanded_faqs: Array.isArray(draft.expanded_faqs) ? draft.expanded_faqs : [],
-    seo_version: -1,
+    seoMetaTitle: draft.seo_meta_title || null,
+    seoMetaDescription: draft.seo_meta_description || null,
+    seoMetaKeywords: Array.isArray(draft.seo_meta_keywords) ? draft.seo_meta_keywords : [],
+    expandedAbout: draft.expanded_about || null,
+    builtForDetails: Array.isArray(draft.built_for_details) ? draft.built_for_details : [],
+    featuresDetails: Array.isArray(draft.features_details) ? draft.features_details : [],
+    expandedUsecases: Array.isArray(draft.expanded_usecases) ? draft.expanded_usecases : [],
+    expandedFaqs: Array.isArray(draft.expanded_faqs) ? draft.expanded_faqs : [],
+    seoVersion: -1,
   };
 }
 
@@ -901,7 +901,7 @@ async function main() {
   console.log('🤖 Programmatic SEO 深度内容双阶段引擎就绪...');
 
   const totalCount = await prisma.aiTool.count({
-    where: { tool_status: 'ONLINE' },
+    where: { toolStatus: 'ONLINE' },
   });
   console.log(`📊 符合条件的 ONLINE 工具共有 ${totalCount} 条。Rank 分层与深度生成已激活。`);
 
@@ -927,8 +927,8 @@ async function main() {
   while (true) {
     const tools = await prisma.aiTool.findMany({
       where: {
-        seo_version: 0,
-        tool_status: 'ONLINE',
+        seoVersion: 0,
+        toolStatus: 'ONLINE',
       },
       take: mode === 'TEST' ? limitCount : DEFAULT_BATCH_SIZE,
       orderBy: [
@@ -960,15 +960,15 @@ async function main() {
         await prisma.aiTool.update({
           where: { id: tool.id },
           data: {
-            seo_meta_title: aiData.seo_meta_title,
-            seo_meta_description: aiData.seo_meta_description,
-            seo_meta_keywords: aiData.seo_meta_keywords,
-            expanded_about: aiData.expanded_about,
-            built_for_details: aiData.built_for_details,
-            features_details: aiData.features_details,
-            expanded_usecases: aiData.expanded_usecases,
-            expanded_faqs: aiData.expanded_faqs,
-            seo_version: 1,
+            seoMetaTitle: aiData.seo_meta_title,
+            seoMetaDescription: aiData.seo_meta_description,
+            seoMetaKeywords: aiData.seo_meta_keywords,
+            expandedAbout: aiData.expanded_about,
+            builtForDetails: aiData.built_for_details,
+            featuresDetails: aiData.features_details,
+            expandedUsecases: aiData.expanded_usecases,
+            expandedFaqs: aiData.expanded_faqs,
+            seoVersion: 1,
           },
         });
 

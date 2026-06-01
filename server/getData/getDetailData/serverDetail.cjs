@@ -69,7 +69,7 @@ async function crawlCategoryDetail(categoryHandle) {
         select: {
             id: true,
             handle: true,
-            tool_count: true, // 🔥 确保选中了这个字段
+            toolCount: true,
             name: true
         }
     });
@@ -81,7 +81,7 @@ async function crawlCategoryDetail(categoryHandle) {
     }
     // 🔥 新增：动态计算最大页数
     // 如果 tool_count 不存在，默认给个 1 页防止死循环
-    const totalTools = category?.tool_count || 0;
+    const totalTools = category?.toolCount || 0;
     const maxPages = Math.ceil(totalTools / 20); // 向上取整
     console.log(`📊 该分类共有 ${totalTools} 个工具，预计需爬取 ${maxPages} 页`);
 
@@ -279,9 +279,9 @@ async function extractAndSaveCategoryMeta(page, categoryId) {
     await prisma.categoryLevel2.update({
         where: { id: categoryId },
         data: {
-            what_is_summary: meta.what_is_summary,
-            who_is_use: meta.who_is_use,
-            how_do_work: meta.how_do_work,
+            whatIsSummary: meta.what_is_summary,
+            whoIsUse: meta.who_is_use,
+            howDoWork: meta.how_do_work,
             advantages: meta.advantages,
             // 注意：如果 feature 在数据库是 String 类型，用 meta.feature?.join(', ')
             // 如果是 String[] 类型，直接赋值
@@ -519,14 +519,14 @@ async function extractToolsFromPage(page) {
                     website,
                     description,
                     image,
-                    website_logo: image,
-                    website_name: name,
-                    what_is_summary,
-                    tool_info_review,
-                    collected_count,
-                    is_free: isFree,
-                    is_ad: false,
-                    month_visited_count: 0,
+                    websiteLogo: image,
+                    websiteName: name,
+                    whatIsSummary: what_is_summary,
+                    toolInfoReview: tool_info_review,
+                    collectedCount: collected_count,
+                    isFree,
+                    isAd: false,
+                    monthVisitedCount: 0,
 
                     // 数组类型字段
                     pricing,
