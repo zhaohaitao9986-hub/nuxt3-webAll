@@ -71,7 +71,7 @@ export default defineEventHandler(async (event) => {
           take: 2,
         },
       },
-    }),
+    } as any),
     prisma.categoryLevel2.findMany({
       where: { isActive: true },
       orderBy: [{ sort: 'asc' }, { toolCount: 'desc' }],
@@ -81,21 +81,21 @@ export default defineEventHandler(async (event) => {
         handle: true,
         toolCount: true,
       },
-    }),
-  ])
+    } as any),
+  ]) as [number, any[], any[]]
 
   return {
     page,
     pageSize,
     total,
     totalPages: Math.ceil(total / pageSize),
-    categories: categories.map((category) => ({
+    categories: categories.map((category: any) => ({
       name: category.name,
       handle: category.handle,
       toolCount: Number(category.toolCount || 0),
       tool_count: Number(category.toolCount || 0),
     })),
-    tools: tools.map((tool) => {
+    tools: tools.map((tool: any) => {
       const { toolCategories } = tool
       return {
         id: tool.id,
@@ -112,7 +112,7 @@ export default defineEventHandler(async (event) => {
         isFree: Boolean(tool.isFree),
         is_free: Boolean(tool.isFree),
         is_ad: false,
-        categories: toolCategories.map((item) => item.category),
+        categories: toolCategories.map((item: any) => item.category),
       }
     }),
   }
