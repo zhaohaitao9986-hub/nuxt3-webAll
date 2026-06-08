@@ -8,6 +8,10 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     jwtSecret: process.env.JWT_SECRET || '',
+    aiApiKey: process.env.AI_API_KEY || process.env.DEEPSEEK_API_KEY || '',
+    aiBaseUrl: process.env.AI_BASE_URL || 'https://api.deepseek.com/v1',
+    aiModel: process.env.AI_MODEL || 'deepseek-chat',
+    aiTimeoutMs: process.env.AI_TIMEOUT_MS || '300000',
   },
 
   routeRules: {

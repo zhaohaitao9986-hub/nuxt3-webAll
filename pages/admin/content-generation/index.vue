@@ -31,6 +31,12 @@ const page = ref(1)
 const pageSize = ref(20)
 const loading = ref(false)
 const statusLoading = reactive({})
+const generationLoading = reactive({})
+const reviewLoading = reactive({})
+const selectedRows = ref([])
+const batchLoading = ref(false)
+const categoryOptions = ref([])
+const toolOptions = ref([])
 
 const createVisible = ref(false)
 const createSaving = ref(false)
@@ -40,6 +46,9 @@ const createForm = reactive({
   slug: '',
   contentType: 'BUYER_GUIDE',
   targetType: 'guide',
+  categoryId: '',
+  toolId: '',
+  limit: 10,
   status: 'draft',
 })
 
@@ -53,12 +62,23 @@ const detailForm = reactive({
   slug: '',
   contentType: '',
   targetType: '',
+  categoryId: '',
+  toolId: '',
+  limit: 10,
   status: 'draft',
+  generatedContentText: '',
   contentJsonText: '',
   sourceDataJsonText: '',
   rawOutput: '',
   validationJsonText: '',
   errorMessage: '',
+  rejectReason: '',
+})
+
+const rejectVisible = ref(false)
+const rejectSaving = ref(false)
+const rejectForm = reactive({
+  reason: '',
 })
 
 const createRules = {
@@ -146,6 +166,21 @@ async function loadList() {
   }
 }
 
+async function loadOptions() {
+  try {
+    const [categoriesRes, toolsRes] = await Promise.all([
+      adminAxios.get('/api/admin/categories/options'),
+      adminAxios.get('/api/admin/tools', { params: { page: 1, pageSize: 100, status: 1 } }),
+    ])
+    categoryOptions.value = categoriesRes.data?.data || []
+    toolOptions.value = toolsRes.data?.data || []
+  }
+  catch {
+    categoryOptions.value = []
+    toolOptions.value = []
+  }
+}
+
 function onSearch() {
   page.value = 1
   loadList()
@@ -169,11 +204,58 @@ function onSizeChange(s) {
   loadList()
 }
 
+function onSelectionChange(rows) {
+  selectedRows.value = rows
+}
+
+async function batchGenerateTasks() {
+  const ids = selectedRows.value.map((row) => row.id).filter(Boolean)
+  if (!ids.length) {
+    ElMessage.warning('请选择需要生成的任务')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(`将批量生成 ${ids.length} 个任务，生成结果只会进入待审核状态。确定继续吗？`, '批量生成确认', {
+      type: 'warning',
+      confirmButtonText: '批量生成',
+      cancelButtonText: '取消',
+    })
+  }
+  catch {
+    return
+  }
+
+  batchLoading.value = true
+  try {
+    const res = await adminAxios.post('/api/admin/content-generation/tasks/batch-generate', {
+      ids,
+      concurrency: 2,
+    })
+    const data = res.data || {}
+    ElMessage.success(`批量生成完成：成功 ${data.success || 0}，失败 ${data.failed || 0}`)
+    await loadList()
+  }
+  catch (e) {
+    if (e?.response?.status === 401) {
+      return
+    }
+    ElMessage.error(errorMessage(e, '批量生成失败'))
+    await loadList()
+  }
+  finally {
+    batchLoading.value = false
+  }
+}
+
 function openCreate() {
   createForm.title = ''
   createForm.slug = ''
   createForm.contentType = 'BUYER_GUIDE'
   createForm.targetType = 'guide'
+  createForm.categoryId = ''
+  createForm.toolId = ''
+  createForm.limit = 10
   createForm.status = 'draft'
   createVisible.value = true
   nextTick(() => createFormRef.value?.clearValidate?.())
@@ -184,7 +266,7 @@ async function submitCreate() {
     await createFormRef.value?.validate?.()
   }
   catch {
-    return
+    return false
   }
 
   createSaving.value = true
@@ -194,6 +276,9 @@ async function submitCreate() {
       slug: createForm.slug.trim(),
       contentType: createForm.contentType.trim(),
       targetType: createForm.targetType.trim(),
+      categoryId: createForm.categoryId || null,
+      toolId: createForm.toolId || null,
+      limit: createForm.limit,
       status: createForm.status,
     })
     ElMessage.success('已创建')
@@ -217,12 +302,17 @@ function fillDetailForm(row) {
   detailForm.slug = row.slug || ''
   detailForm.contentType = row.contentType || ''
   detailForm.targetType = row.targetType || ''
+  detailForm.categoryId = row.categoryId ?? ''
+  detailForm.toolId = row.toolId ?? ''
+  detailForm.limit = row.limit ?? 10
   detailForm.status = row.status || 'draft'
-  detailForm.contentJsonText = stringifyJson(row.contentJson)
+  detailForm.generatedContentText = stringifyJson(row.generatedContent || row.generated_content || row.contentJson)
+  detailForm.contentJsonText = stringifyJson(row.finalContent || row.final_content || row.contentJson)
   detailForm.sourceDataJsonText = stringifyJson(row.sourceDataJson)
   detailForm.rawOutput = row.rawOutput || ''
   detailForm.validationJsonText = stringifyJson(row.validationJson)
-  detailForm.errorMessage = row.errorMessage || ''
+  detailForm.errorMessage = row.errorMessage || row.error_message || ''
+  detailForm.rejectReason = row.rejectReason || row.reject_reason || ''
 }
 
 async function openDetail(row) {
@@ -249,7 +339,7 @@ async function saveDetail() {
     await detailFormRef.value?.validate?.()
   }
   catch {
-    return
+    return false
   }
 
   let payload
@@ -259,7 +349,11 @@ async function saveDetail() {
       slug: detailForm.slug.trim(),
       contentType: detailForm.contentType.trim(),
       targetType: detailForm.targetType.trim(),
+      categoryId: detailForm.categoryId || null,
+      toolId: detailForm.toolId || null,
+      limit: detailForm.limit,
       contentJson: parseJsonText(detailForm.contentJsonText, '内容 JSON'),
+      finalContent: parseJsonText(detailForm.contentJsonText, '最终内容 JSON'),
       sourceDataJson: parseJsonText(detailForm.sourceDataJsonText, '来源 JSON'),
       rawOutput: detailForm.rawOutput,
       validationJson: parseJsonText(detailForm.validationJsonText, '校验 JSON'),
@@ -268,7 +362,7 @@ async function saveDetail() {
   }
   catch (e) {
     ElMessage.error(e.message)
-    return
+    return false
   }
 
   detailSaving.value = true
@@ -277,15 +371,165 @@ async function saveDetail() {
     fillDetailForm(res.data)
     ElMessage.success('已保存')
     await loadList()
+    return true
   }
   catch (e) {
     if (e?.response?.status === 401) {
       return
     }
     ElMessage.error(errorMessage(e, '保存失败'))
+    return false
   }
   finally {
     detailSaving.value = false
+  }
+}
+
+async function approveTask() {
+  const id = editingId.value
+  if (!id) {
+    return
+  }
+  reviewLoading[id] = true
+  try {
+    const saved = await saveDetail()
+    if (!saved) {
+      return
+    }
+    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${id}/approve`)
+    fillDetailForm(res.data)
+    ElMessage.success('审核已通过')
+    await loadList()
+  }
+  catch (e) {
+    if (e?.response?.status === 401) {
+      return
+    }
+    ElMessage.error(errorMessage(e, '审核通过失败'))
+  }
+  finally {
+    reviewLoading[id] = false
+  }
+}
+
+function openReject() {
+  rejectForm.reason = detailForm.rejectReason || ''
+  rejectVisible.value = true
+}
+
+async function submitReject() {
+  const id = editingId.value
+  if (!id) {
+    return
+  }
+  const reason = rejectForm.reason.trim()
+  if (!reason) {
+    ElMessage.warning('请填写驳回原因')
+    return
+  }
+
+  rejectSaving.value = true
+  try {
+    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${id}/reject`, {
+      rejectReason: reason,
+    })
+    fillDetailForm(res.data)
+    rejectVisible.value = false
+    ElMessage.success('已驳回')
+    await loadList()
+  }
+  catch (e) {
+    if (e?.response?.status === 401) {
+      return
+    }
+    ElMessage.error(errorMessage(e, '驳回失败'))
+  }
+  finally {
+    rejectSaving.value = false
+  }
+}
+
+async function publishTask() {
+  const id = editingId.value
+  if (!id) {
+    return
+  }
+  try {
+    await ElMessageBox.confirm('发布会写入正式内容发布存储，确定发布吗？', '发布确认', {
+      type: 'warning',
+      confirmButtonText: '发布',
+      cancelButtonText: '取消',
+    })
+  }
+  catch {
+    return
+  }
+
+  reviewLoading[id] = true
+  try {
+    const saved = await saveDetail()
+    if (!saved) {
+      return
+    }
+    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${id}/publish`)
+    fillDetailForm(res.data)
+    ElMessage.success('发布成功')
+    await loadList()
+  }
+  catch (e) {
+    if (e?.response?.status === 401) {
+      return
+    }
+    ElMessage.error(errorMessage(e, '发布失败'))
+  }
+  finally {
+    reviewLoading[id] = false
+  }
+}
+
+async function generateTask(mode) {
+  if (!editingId.value) {
+    return
+  }
+  const id = editingId.value
+  const endpoint = mode === 'regenerate' ? 'regenerate' : 'generate'
+
+  if (mode === 'regenerate') {
+    try {
+      await ElMessageBox.confirm('重新生成会覆盖当前生成内容，确定继续吗？', '重新生成确认', {
+        type: 'warning',
+        confirmButtonText: '重新生成',
+        cancelButtonText: '取消',
+      })
+    }
+    catch {
+      return
+    }
+  }
+
+  generationLoading[id] = true
+  try {
+    const saved = await saveDetail()
+    if (!saved) {
+      return
+    }
+    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${id}/${endpoint}`)
+    fillDetailForm(res.data)
+    ElMessage.success(mode === 'regenerate' ? '已重新生成，进入待审核' : '已生成，进入待审核')
+    await loadList()
+  }
+  catch (e) {
+    if (e?.response?.status === 401) {
+      return
+    }
+    const message = errorMessage(e, mode === 'regenerate' ? '重新生成失败' : '生成失败')
+    ElMessage.error(message)
+    detailForm.status = 'failed'
+    detailForm.errorMessage = message
+    await loadList()
+  }
+  finally {
+    generationLoading[id] = false
   }
 }
 
@@ -294,16 +538,16 @@ async function changeStatus(row, status) {
     return
   }
   if (status === 'published') {
-    try {
-      await ElMessageBox.confirm('本阶段不会发布正式内容，仅更新任务状态。确定继续吗？', '状态确认', {
-        type: 'warning',
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
-      })
-    }
-    catch {
-      return
-    }
+    ElMessage.warning('请在详情页使用发布按钮')
+    return
+  }
+  if (status === 'approved') {
+    ElMessage.warning('请在详情页使用审核通过按钮')
+    return
+  }
+  if (status === 'rejected') {
+    ElMessage.warning('请在详情页使用驳回按钮')
+    return
   }
 
   statusLoading[row.id] = true
@@ -328,6 +572,7 @@ async function changeStatus(row, status) {
 }
 
 onMounted(() => {
+  loadOptions()
   loadList()
 })
 </script>
@@ -371,6 +616,14 @@ onMounted(() => {
         <el-button type="primary" @click="openCreate">
           新建任务
         </el-button>
+        <el-button
+          type="success"
+          :loading="batchLoading"
+          :disabled="!selectedRows.length"
+          @click="batchGenerateTasks"
+        >
+          批量生成
+        </el-button>
       </div>
 
       <el-table
@@ -380,7 +633,9 @@ onMounted(() => {
         border
         stripe
         style="width: 100%"
+        @selection-change="onSelectionChange"
       >
+        <el-table-column type="selection" width="48" />
         <el-table-column prop="id" label="ID" width="72" />
         <el-table-column prop="title" label="任务标题" min-width="180" show-overflow-tooltip />
         <el-table-column prop="slug" label="Slug" min-width="160" show-overflow-tooltip />
@@ -466,6 +721,41 @@ onMounted(() => {
         <el-form-item label="目标类型">
           <el-input v-model="createForm.targetType" placeholder="guide / compare / alternative" />
         </el-form-item>
+        <el-form-item label="分类">
+          <el-select
+            v-model="createForm.categoryId"
+            clearable
+            filterable
+            placeholder="可选，用于按分类读取工具"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="opt in categoryOptions"
+              :key="opt.id"
+              :label="opt.label || opt.name"
+              :value="opt.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="工具">
+          <el-select
+            v-model="createForm.toolId"
+            clearable
+            filterable
+            placeholder="可选，指定主工具"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="tool in toolOptions"
+              :key="tool.id"
+              :label="tool.name"
+              :value="tool.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="数量">
+          <el-input-number v-model="createForm.limit" :min="1" :max="30" style="width: 160px" />
+        </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="createForm.status" style="width: 100%">
             <el-option
@@ -507,12 +797,56 @@ onMounted(() => {
           <el-form-item label="目标类型">
             <el-input v-model="detailForm.targetType" />
           </el-form-item>
+          <el-form-item label="分类">
+            <el-select
+              v-model="detailForm.categoryId"
+              clearable
+              filterable
+              placeholder="可选，用于按分类读取工具"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="opt in categoryOptions"
+                :key="opt.id"
+                :label="opt.label || opt.name"
+                :value="opt.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="工具">
+            <el-select
+              v-model="detailForm.toolId"
+              clearable
+              filterable
+              placeholder="可选，指定主工具"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="tool in toolOptions"
+                :key="tool.id"
+                :label="tool.name"
+                :value="tool.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="数量">
+            <el-input-number v-model="detailForm.limit" :min="1" :max="30" style="width: 160px" />
+          </el-form-item>
           <el-form-item label="当前状态">
             <el-tag :type="statusType(detailForm.status)">
               {{ statusLabel(detailForm.status) }}
             </el-tag>
           </el-form-item>
-          <el-form-item label="内容 JSON">
+          <el-form-item label="AI 原始">
+            <el-input
+              v-model="detailForm.generatedContentText"
+              type="textarea"
+              :rows="6"
+              resize="vertical"
+              readonly
+            />
+          </el-form-item>
+          <el-form-item label="最终内容">
             <el-input
               v-model="detailForm.contentJsonText"
               type="textarea"
@@ -552,9 +886,56 @@ onMounted(() => {
               resize="vertical"
             />
           </el-form-item>
+          <el-form-item label="驳回原因">
+            <el-input
+              v-model="detailForm.rejectReason"
+              type="textarea"
+              :rows="3"
+              resize="vertical"
+              readonly
+            />
+          </el-form-item>
         </el-form>
       </div>
       <template #footer>
+        <el-button
+          type="success"
+          :loading="!!generationLoading[editingId]"
+          @click="generateTask('generate')"
+        >
+          生成内容
+        </el-button>
+        <el-button
+          type="warning"
+          :loading="!!generationLoading[editingId]"
+          @click="generateTask('regenerate')"
+        >
+          重新生成
+        </el-button>
+        <el-button
+          v-if="detailForm.status === 'review'"
+          type="primary"
+          :loading="!!reviewLoading[editingId]"
+          @click="approveTask"
+        >
+          审核通过
+        </el-button>
+        <el-button
+          v-if="detailForm.status === 'review'"
+          type="danger"
+          :loading="rejectSaving"
+          @click="openReject"
+        >
+          驳回
+        </el-button>
+        <el-button
+          v-if="detailForm.status === 'approved'"
+          type="success"
+          :loading="!!reviewLoading[editingId]"
+          @click="publishTask"
+        >
+          发布
+        </el-button>
         <el-button @click="detailVisible = false">
           关闭
         </el-button>
@@ -563,6 +944,32 @@ onMounted(() => {
         </el-button>
       </template>
     </el-drawer>
+
+    <el-dialog
+      v-model="rejectVisible"
+      title="驳回内容"
+      width="520px"
+      destroy-on-close
+    >
+      <el-form label-width="86px">
+        <el-form-item label="驳回原因">
+          <el-input
+            v-model="rejectForm.reason"
+            type="textarea"
+            :rows="5"
+            placeholder="请输入需要修改的原因"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rejectVisible = false">
+          取消
+        </el-button>
+        <el-button type="danger" :loading="rejectSaving" @click="submitReject">
+          驳回
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -587,6 +994,8 @@ onMounted(() => {
 
 .content-table-toolbar {
   margin-bottom: 12px;
+  display: flex;
+  gap: 8px;
 }
 
 .content-pagination {

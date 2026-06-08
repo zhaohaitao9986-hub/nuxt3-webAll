@@ -1,0 +1,33 @@
+[
+  {
+    "id": 1,
+    "title": "test",
+    "slug": "",
+    "contentType": "BUYER_GUIDE",
+    "targetType": "guide",
+    "categoryId": null,
+    "toolId": null,
+    "limit": 10,
+    "status": "failed",
+    "contentJson": null,
+    "generatedContent": null,
+    "generated_content": null,
+    "finalContent": null,
+    "final_content": null,
+    "sourceDataJson": null,
+    "rawOutput": "",
+    "validationJson": {
+      "ok": false,
+      "errors": [
+        "没有找到可用于生成的已发布 AI 工具数据"
+      ],
+      "failedAt": "2026-06-08T06:29:15.396Z"
+    },
+    "errorMessage": "没有找到可用于生成的已发布 AI 工具数据",
+    "error_message": "没有找到可用于生成的已发布 AI 工具数据",
+    "createdByUserId": null,
+    "createdByEmail": "zhaohaitao9986@gmail.com",
+    "createdAt": "2026-06-08T06:28:57.215Z",
+    "updatedAt": "2026-06-08T06:29:16.075Z"
+  }
+]
