@@ -2,6 +2,7 @@
 import {
   ArrowDown,
   DataAnalysis,
+  Document,
   FolderOpened,
   MagicStick,
   Odometer,
@@ -15,6 +16,7 @@ const route = useRoute()
 const titleMap = {
   '/admin/dashboard': '仪表盘',
   '/admin/traffic': '流量分析',
+  '/admin/content-generation': '内容生成任务',
   '/admin/tools': 'AI 工具管理',
   '/admin/categories': '二级分类',
   '/admin/categories/level1': '一级分类',
@@ -45,6 +47,9 @@ const activeMenu = computed(() => {
   }
   if (p.startsWith('/admin/traffic')) {
     return '/admin/traffic'
+  }
+  if (p.startsWith('/admin/content-generation')) {
+    return '/admin/content-generation'
   }
   if (p.startsWith('/admin/categories/level1')) {
     return '/admin/categories/level1'
@@ -105,6 +110,10 @@ function handleCommand(cmd) {
         <el-menu-item index="/admin/traffic">
           <el-icon><DataAnalysis /></el-icon>
           <span>流量分析</span>
+        </el-menu-item>
+        <el-menu-item index="/admin/content-generation">
+          <el-icon><Document /></el-icon>
+          <span>内容生成任务</span>
         </el-menu-item>
         <el-sub-menu index="sub-categories">
           <template #title>
