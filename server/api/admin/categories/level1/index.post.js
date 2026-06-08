@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
     name,
     handle,
     sort: Number.isNaN(sort) ? 0 : sort,
-    is_active: body.is_active !== undefined ? Boolean(body.is_active) : true,
+    isActive: body.isActive !== undefined ? Boolean(body.isActive) : (body.is_active !== undefined ? Boolean(body.is_active) : true),
   }
 
   try {

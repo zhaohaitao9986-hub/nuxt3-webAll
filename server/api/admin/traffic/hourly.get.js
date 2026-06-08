@@ -45,7 +45,7 @@ export default defineEventHandler(async (event) => {
           ELSE ROUND((COUNT(*) FILTER (WHERE ${conversionPredicateSql('f')})::numeric * 100 / NULLIF(COUNT(DISTINCT ${identitySql('f')}), 0)), 2)::float
         END AS "conversionRate"
       FROM filtered AS f
-      GROUP BY date_trunc('hour', f."createdAt")
+      GROUP BY date_trunc('hour', ${localTimestampSql('f')})
     )
     SELECT
       to_char(b."bucket", 'YYYY-MM-DD HH24:00') AS "hourLabel",

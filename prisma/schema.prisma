@@ -1,192 +1,1075 @@
-// This is your Prisma schema file
+// AISeekTools V2 Prisma schema
+// Matches the generated public PostgreSQL V2 SQL schema.
+// This file is standalone and does not replace prisma/schema.prisma.
+// Temporary migration_v2 helper tables are intentionally excluded.
+
 generator client {
   provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl", "debian-openssl-3.0.x", "debian-openssl-1.1.x"]
 }
 
-// 数据库：PostgreSQL
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-// 用户权限枚举
-enum Role {
-  USER
+enum ContentPageType {
+  COLLECTION
+  TOOL_REVIEW
+  TUTORIAL
+  COMPARISON
+  ALTERNATIVE
+  INDUSTRY_USE_CASE
+  WORKFLOW_USE_CASE
+  CATEGORY_GUIDE
+  BUYER_GUIDE
+  PRICING_GUIDE
+  METHODOLOGY
+
+  @@map("content_page_type")
+}
+
+enum ContentStatus {
+  DRAFT
+  REVIEW
+  PUBLISHED
+  NEEDS_UPDATE
+  ARCHIVED
+
+  @@map("content_status")
+}
+
+enum RobotsPolicy {
+  INDEX_FOLLOW
+  NOINDEX_FOLLOW
+  NOINDEX_NOFOLLOW
+
+  @@map("robots_policy")
+}
+
+enum SourceType {
+  OFFICIAL_SITE
+  PRICING_PAGE
+  DOCUMENTATION
+  HELP_CENTER
+  PRESS_RELEASE
+  THIRD_PARTY_REVIEW
+  INTERNAL_TEST
+  OTHER
+
+  @@map("source_type")
+}
+
+enum SourceStatus {
+  ACTIVE
+  BROKEN
+  STALE
+  REMOVED
+
+  @@map("source_status")
+}
+
+enum MediaType {
+  LOGO
+  SCREENSHOT
+  OG_IMAGE
+  TUTORIAL_IMAGE
+  VIDEO
+
+  @@map("media_type")
+}
+
+enum DifficultyLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+
+  @@map("difficulty_level")
+}
+
+enum ComparisonType {
+  TOOL_VS_TOOL
+  MULTI_TOOL
+  TOOL_VS_CATEGORY
+  ALTERNATIVES
+
+  @@map("comparison_type")
+}
+
+enum BillingInterval {
+  FREE
+  ONE_TIME
+  MONTHLY
+  YEARLY
+  USAGE_BASED
+  CUSTOM
+
+  @@map("billing_interval")
+}
+
+enum ToolStatus {
+  ACTIVE
+  OFFLINE
+  ARCHIVED
+  DRAFT
+
+  @@map("tool_status")
+}
+
+enum LinkStatus {
+  ACTIVE
+  DRAFT
+  DISABLED
+  BROKEN
+
+  @@map("link_status")
+}
+
+enum AuditSeverity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+
+  @@map("audit_severity")
+}
+
+enum AdminRole {
   ADMIN
   SUPERADMIN
+
+  @@map("admin_role")
 }
 
-// 用户表：整合了前台用户和后台管理员
+enum ContentGenerationTaskStatus {
+  DRAFT
+  PENDING
+  GENERATING
+  FAILED
+  REVIEW
+  APPROVED
+  REJECTED
+  PUBLISHED
+
+  @@map("content_generation_task_status")
+}
+
 model User {
-  id            Int      @id @default(autoincrement())
-  name          String?
-  email         String   @unique
-  password      String   // 新增：后台登录必须有密码
-  avatar        String?  // 新增：头像
-  role          Role     @default(USER) // 新增：区分角色
-  isActive      Boolean  @default(true) // 新增：是否禁用账户
-  
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@map("users")
+  id    Int     @id @default(autoincrement())
+  name  String?
+  email String  @unique
+  age   Int?
 }
 
-// 一级分类
-model CategoryLevel1 {
-  id               Int              @id @default(autoincrement())
-  name             String
-  handle           String           @unique
-  sort             Int              @default(0)
-  is_active        Boolean          @default(true)
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  level2Categories CategoryLevel2[]
+model AdminUser {
+  id           Int       @id @default(autoincrement())
+  name         String?
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  avatar       String?
+  role         AdminRole @default(ADMIN)
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamp(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt    DateTime  @default(now()) @map("updated_at") @db.Timestamp(3)
 
+  createdContentGenerationTasks   ContentGenerationTask[]          @relation("ContentGenerationTaskCreatedBy")
+  approvedContentGenerationTasks  ContentGenerationTask[]          @relation("ContentGenerationTaskApprovedBy")
+  rejectedContentGenerationTasks  ContentGenerationTask[]          @relation("ContentGenerationTaskRejectedBy")
+  publishedContentGenerationTasks ContentGenerationTask[]          @relation("ContentGenerationTaskPublishedBy")
+  contentGenerationEvents         ContentGenerationTaskEvent[]      @relation("ContentGenerationEventActor")
+  contentGenerationPromptVersions ContentGenerationPromptVersion[]  @relation("ContentGenerationPromptCreatedBy")
+
+  @@index([role], map: "idx_admin_users_role")
+  @@index([isActive], map: "idx_admin_users_active")
+  @@map("admin_users")
+}
+
+model CategoryLevel1 {
+  id        Int      @id @default(autoincrement())
+  name      String
+  handle    String   @unique
+  sort      Int      @default(0)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("createdAt") @db.Timestamp(3)
+  updatedAt DateTime @default(now()) @map("updatedAt") @db.Timestamp(3)
+
+  level2Categories     CategoryLevel2[]
+  categoryContentPages CategoryContentPage[]
+  collectionPages      CollectionPage[]
+
+  @@index([isActive, sort(sort: Desc), id], map: "idx_category_level1_active_sort")
   @@map("category_level1")
 }
 
-// 二级分类
 model CategoryLevel2 {
-  id              Int              @id @default(autoincrement())
-  name            String
-  handle          String           @unique
-  tool_count      Int              @default(0)
-  sort            Int              @default(0)
-  is_active       Boolean          @default(true)
-  level1Id        Int
-  level1          CategoryLevel1   @relation(fields: [level1Id], references: [id], onDelete: Cascade)
-  toolCategories  AiToolCategory[]
-  
-  what_is_summary String?
-  feature         String[]
-  who_is_use      String?
-  how_do_work     String?
-  advantages      String?
-  faq             Json?
+  id            Int      @id @default(autoincrement())
+  name          String
+  handle        String   @unique
+  toolCount     Int      @default(0) @map("tool_count")
+  sort          Int      @default(0)
+  isActive      Boolean  @default(true) @map("is_active")
+  level1Id      Int      @map("level1Id")
+  whatIsSummary String?  @map("what_is_summary")
+  feature       String[] @default([])
+  whoIsUse      String?  @map("who_is_use")
+  howDoWork     String?  @map("how_do_work")
+  advantages    String?
+  faq           Json?
+  createdAt     DateTime @default(now()) @map("createdAt") @db.Timestamp(3)
+  updatedAt     DateTime @default(now()) @map("updatedAt") @db.Timestamp(3)
 
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  level1               CategoryLevel1        @relation(fields: [level1Id], references: [id], onDelete: Cascade)
+  toolCategories       AiToolCategory[]
+  tutorials            TutorialPage[]
+  comparisonPages      ComparisonPage[]
+  alternativePages     AlternativePage[]
+  industryUseCasePages IndustryUseCasePage[]
+  workflowUseCases     WorkflowUseCase[]
+  categoryContentPages CategoryContentPage[]
+  contentGenerationTasks ContentGenerationTask[]
 
+  @@index([level1Id], map: "idx_category_level2_level1")
+  @@index([isActive, toolCount(sort: Desc), sort(sort: Desc)], map: "idx_category_level2_active_tool_count")
   @@map("category_level2")
 }
 
-// 中间表
 model AiToolCategory {
-  aiToolId   Int
-  categoryId Int
-  aiTool     AiTool         @relation(fields: [aiToolId], references: [id], onDelete: Cascade)
-  category   CategoryLevel2 @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  aiToolId   Int @map("aiToolId")
+  categoryId Int @map("categoryId")
+
+  aiTool   AiTool         @relation(fields: [aiToolId], references: [id], onDelete: Cascade)
+  category CategoryLevel2 @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@id([aiToolId, categoryId])
+  @@index([categoryId], map: "idx_ai_tool_categories_category")
+  @@index([aiToolId], map: "idx_ai_tool_categories_tool")
   @@map("ai_tool_categories")
 }
 
-// 核心 AI 工具表
 model AiTool {
-  id                   Int              @id @default(autoincrement())
-  website              String?
-  collected_count      Int              @default(0)
-  description          String?
-  handle               String           @unique
-  image                String?
-  month_visited_count  BigInt           @default(0)
-  name                 String
-  what_is_summary      String?
-  is_ad                Boolean          @default(false)
-  website_name         String?
-  is_free              Boolean          @default(false)
-  website_logo         String?
-  pros                 String[]
-  cons                 String[]
-  pricing              String[]
-  feature              String[]
-  tool_info_review     Decimal?         @db.Decimal(3, 1)
-  add_time             String?
-  website_type         String[]
-  social_email         String[]
-  tags                 String[]
-  faq                  Json?
-  for_jobs             String[]
-  use_cases            String[]
-  company_info         String?
-  recommend_learn      String[]
-  toolCategories       AiToolCategory[]
+  id                 Int       @id @default(autoincrement())
+  website            String?
+  collectedCount     Int       @default(0) @map("collected_count")
+  description        String?
+  handle             String    @unique
+  image              String?
+  monthVisitedCount  BigInt    @default(0) @map("month_visited_count")
+  name               String
+  whatIsSummary      String?   @map("what_is_summary")
+  isAd               Boolean   @default(false) @map("is_ad")
+  websiteName        String?   @map("website_name")
+  isFree             Boolean   @default(false) @map("is_free")
+  websiteLogo        String?   @map("website_logo")
+  pros               String[]  @default([])
+  cons               String[]  @default([])
+  pricing            String[]  @default([])
+  feature            String[]  @default([])
+  toolInfoReview     Decimal?  @map("tool_info_review") @db.Decimal(3, 1)
+  addTime            String?   @map("add_time")
+  websiteType        String[]  @default([]) @map("website_type")
+  socialEmail        String[]  @default([]) @map("social_email")
+  tags               String[]  @default([])
+  faq                Json?
+  forJobs            String[]  @default([]) @map("for_jobs")
+  useCases           String[]  @default([]) @map("use_cases")
+  companyInfo        String?   @map("company_info")
+  recommendLearn     String[]  @default([]) @map("recommend_learn")
+  toolStatus         String?   @map("tool_status")
+  seoMetaTitle       String?   @map("seo_meta_title") @db.VarChar(255)
+  seoMetaDescription String?   @map("seo_meta_description") @db.VarChar(500)
+  seoMetaKeywords    String[]  @default([]) @map("seo_meta_keywords")
+  expandedAbout      String?   @map("expanded_about")
+  builtForDetails    Json?     @map("built_for_details")
+  featuresDetails    Json?     @map("features_details")
+  expandedUsecases   Json?     @map("expanded_usecases")
+  expandedFaqs       Json?     @map("expanded_faqs")
+  seoVersion         Int       @default(0) @map("seo_version")
+  rank               Int
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt          DateTime  @default(now()) @map("updated_at") @db.Timestamp(3)
+  addedAt            DateTime? @map("added_at") @db.Timestamp(3)
+  lastVerifiedAt     DateTime? @map("last_verified_at") @db.Timestamp(3)
+  pricingVerifiedAt  DateTime? @map("pricing_verified_at") @db.Timestamp(3)
+  publishedAt        DateTime? @map("published_at") @db.Timestamp(3)
 
+  toolCategories           AiToolCategory[]
+  pricingPlans             ToolPricingPlan[]
+  claims                   ToolClaim[]
+  media                    ToolMedia[]
+  socialLinks              ToolSocialLink[]
+  platforms                ToolPlatform[]
+  tagAssignments           ToolTagAssignment[]
+  reviewPages              ReviewPage[]
+  tutorials                TutorialPage[]
+  primaryComparisonPages   ComparisonPage[]    @relation("PrimaryComparisonTool")
+  secondaryComparisonPages ComparisonPage[]    @relation("SecondaryComparisonTool")
+  comparisonTools          ComparisonTool[]
+  alternativePages         AlternativePage[]
+  alternativeTools         AlternativeTool[]
+  workflowFits             ToolWorkflowFit[]
+  collectionTools          CollectionTool[]
+  contentGenerationTasks   ContentGenerationTask[]
 
-  // 新增字段
-  status            Int      @default(1) // 0: 草稿/待审核, 1: 已发布, -1: 已下架
-  views             Int      @default(0) // 平台内部的真实/模拟点击量
-  sort_weight       Int      @default(0) // 排序权重，用于人工干预置顶或强推
-  seo_title         String?  // 独立 SEO 标题 (为了更好的收录)
-  seo_keywords      String?  // 独立 SEO 关键词
-  
-  created_at           DateTime         @default(now())
-  updated_at           DateTime         @updatedAt
-
+  @@index([toolStatus], map: "idx_ai_tools_tool_status")
+  @@index([monthVisitedCount(sort: Desc)], map: "idx_ai_tools_monthly_visits")
+  @@index([rank], map: "idx_ai_tools_rank")
+  @@index([createdAt], map: "idx_ai_tools_created_at")
+  @@index([updatedAt], map: "idx_ai_tools_updated_at")
+  @@index([isFree], map: "idx_ai_tools_is_free")
+  @@index([addTime], map: "idx_ai_tools_add_time")
+  @@index([addedAt], map: "idx_ai_tools_added_at")
   @@map("ai_tools")
 }
 
-
-// 2. 新增：操作日志表 (用于追溯管理员行为)
-model OperationLog {
-  id          Int      @id @default(autoincrement())
-  userId      Int
-  action      String   // 例如："UPDATE_TOOL", "DELETE_USER"
-  targetId    Int?     // 被操作的资源ID
-  details     Json?    // 具体的变更内容快照
-  ipAddress   String?  
-  createdAt   DateTime @default(now())
-
-  @@map("operation_logs")
-}
-
-
-
-// 数据库表名：traffic_logs
 model TrafficLog {
-  id          BigInt    @id @default(autoincrement())
-  // 创建时间：应用层在 /api/traffic 中显式按 UTC+8（Asia/Shanghai）写入；未走 API 的插入仍可用 @default(now())
-  createdAt   DateTime  @default(now()) @db.Timestamptz(3) @map("createdAt")
-
-  // 日志元数据
+  id          BigInt   @id @default(autoincrement())
+  createdAt   DateTime @default(now()) @map("createdAt") @db.Timestamptz(3)
   level       Int
   pid         Int
-  hostname    String    @db.VarChar(255)
-
-  // 用户与会话标识
-  uid         String    @db.VarChar(255)
-  sid         String    @db.VarChar(255)
-
-  // 行为类型
-  type        String    @db.VarChar(50)
-
-  // 流量来源与页面信息
-  utmSource   String?   @db.VarChar(255) @map("utm_source")
-  url         String    @db.Text
-  ref         String?   @db.Text
+  hostname    String   @db.VarChar(255)
+  uid         String   @db.VarChar(255)
+  sid         String   @db.VarChar(255)
+  type        String   @db.VarChar(50)
+  utmSource   String?  @map("utm_source") @db.VarChar(255)
+  url         String
+  ref         String?
   ts          BigInt
+  pageStay    Int      @default(0) @map("page_stay")
+  sessionStay Int      @default(0) @map("session_stay")
+  from        String?
+  to          String?
+  ip          String   @db.VarChar(100)
+  ua          String
+  userAgent   String   @map("userAgent")
 
-  // 停留时长
-  pageStay    Int       @default(0) @map("page_stay")
-  sessionStay Int       @default(0) @map("session_stay")
-
-  // 跳转路径
-  from        String?   @db.Text
-  to          String?   @db.Text
-
-  // 用户设备信息
-  ip          String    @db.VarChar(100)
-  ua          String    @db.Text
-  userAgent   String    @db.Text
-
-  // 索引配置（对应数据库里的索引）
-  @@index([uid])
-  @@index([sid])
-  @@index([type])
-  @@index([createdAt])
-  @@index([ts])
-
-  // 映射到数据库的表名
+  @@index([uid], map: "idx_traffic_logs_uid")
+  @@index([sid], map: "idx_traffic_logs_sid")
+  @@index([type], map: "idx_traffic_logs_type")
+  @@index([createdAt], map: "idx_traffic_logs_created_at")
+  @@index([ts], map: "idx_traffic_logs_ts")
   @@map("traffic_logs")
+}
+
+model Author {
+  id         Int      @id @default(autoincrement())
+  name       String
+  slug       String   @unique
+  role       String?
+  bio        String?
+  avatarUrl  String?  @map("avatar_url")
+  sameAs     String[] @default([]) @map("same_as")
+  isReviewer Boolean  @default(false) @map("is_reviewer")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt  DateTime @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  authoredPages ContentPage[] @relation("ContentAuthor")
+  reviewedPages ContentPage[] @relation("ContentReviewer")
+
+  @@index([isActive], map: "idx_authors_active")
+  @@map("authors")
+}
+
+model ContentPage {
+  id                Int             @id @default(autoincrement())
+  type              ContentPageType
+  slug              String
+  canonicalPath     String          @unique @map("canonical_path")
+  title             String
+  metaTitle         String?         @map("meta_title") @db.VarChar(255)
+  metaDescription   String?         @map("meta_description") @db.VarChar(500)
+  summary           String?
+  bodyJson          Json?           @map("body_json")
+  seoJson           Json?           @map("seo_json")
+  schemaJson        Json?           @map("schema_json")
+  status            ContentStatus   @default(DRAFT)
+  robots            RobotsPolicy    @default(INDEX_FOLLOW)
+  publishedAt       DateTime?       @map("published_at") @db.Timestamp(3)
+  reviewedAt        DateTime?       @map("reviewed_at") @db.Timestamp(3)
+  authorId          Int?            @map("author_id")
+  reviewerId        Int?            @map("reviewer_id")
+  sitemapPriority   Decimal?        @map("sitemap_priority") @db.Decimal(2, 1)
+  sitemapChangefreq String?         @map("sitemap_changefreq")
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt         DateTime        @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  author                Author?              @relation("ContentAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  reviewer              Author?              @relation("ContentReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  sources               ContentSource[]
+  media                 ToolMedia[]
+  outgoingLinks         InternalLink[]       @relation("InternalLinkSource")
+  incomingLinks         InternalLink[]       @relation("InternalLinkTarget")
+  linkSuggestionsSource PageLinkSuggestion[] @relation("PageLinkSuggestionSource")
+  linkSuggestionsTarget PageLinkSuggestion[] @relation("PageLinkSuggestionTarget")
+  seoAuditIssues        SeoAuditIssue[]
+  reviewPage            ReviewPage?
+  tutorialPage          TutorialPage?
+  comparisonPage        ComparisonPage?
+  alternativePage       AlternativePage?
+  industryUseCasePage   IndustryUseCasePage?
+  categoryContentPage   CategoryContentPage?
+  collectionPage        CollectionPage?
+  contentGenerationTasks ContentGenerationTask[]
+
+  @@unique([type, slug], map: "content_pages_type_slug_unique")
+  @@index([status, type], map: "idx_content_pages_status_type")
+  @@index([publishedAt], map: "idx_content_pages_published_at")
+  @@index([reviewedAt], map: "idx_content_pages_reviewed_at")
+  @@index([authorId], map: "idx_content_pages_author")
+  @@index([reviewerId], map: "idx_content_pages_reviewer")
+  @@map("content_pages")
+}
+
+model Source {
+  id            Int          @id @default(autoincrement())
+  url           String       @unique
+  domain        String
+  title         String?
+  sourceType    SourceType   @map("source_type")
+  retrievedAt   DateTime?    @map("retrieved_at") @db.Timestamp(3)
+  lastCheckedAt DateTime?    @map("last_checked_at") @db.Timestamp(3)
+  status        SourceStatus @default(ACTIVE)
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt     DateTime     @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  contentPages      ContentSource[]
+  pricingPlans      ToolPricingPlan[]
+  claims            ToolClaim[]
+  socialLinks       ToolSocialLink[]
+  platforms         ToolPlatform[]
+  workflowFits      ToolWorkflowFit[]
+  sourceCheckIssues SourceCheckIssue[]
+
+  @@index([domain], map: "idx_sources_domain")
+  @@index([sourceType, status], map: "idx_sources_type_status")
+  @@map("sources")
+}
+
+model ContentSource {
+  contentPageId Int     @map("content_page_id")
+  sourceId      Int     @map("source_id")
+  context       String?
+  sort          Int     @default(0)
+
+  contentPage ContentPage @relation(fields: [contentPageId], references: [id], onDelete: Cascade)
+  source      Source      @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@id([contentPageId, sourceId])
+  @@index([sourceId], map: "idx_content_sources_source")
+  @@map("content_sources")
+}
+
+model ContentGenerationPromptVersion {
+  id                 Int      @id @default(autoincrement())
+  name               String
+  version            Int
+  provider           String?
+  model              String?
+  systemPrompt       String   @map("system_prompt")
+  userPromptTemplate String   @map("user_prompt_template")
+  configJson         Json?    @map("config_json")
+  rulesJson          Json?    @map("rules_json")
+  isActive           Boolean  @default(true) @map("is_active")
+  createdByAdminId   Int?     @map("created_by_admin_id")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  createdByAdmin AdminUser?              @relation("ContentGenerationPromptCreatedBy", fields: [createdByAdminId], references: [id], onDelete: SetNull)
+  tasks          ContentGenerationTask[]
+
+  @@unique([name, version], map: "content_generation_prompt_versions_name_version_key")
+  @@index([isActive], map: "idx_content_generation_prompt_versions_active")
+  @@map("content_generation_prompt_versions")
+}
+
+model ContentGenerationTask {
+  id                   Int                         @id @default(autoincrement())
+  title                String
+  slug                 String?                     @db.VarChar(255)
+  contentType          ContentPageType             @default(BUYER_GUIDE) @map("content_type")
+  targetType           String?                     @map("target_type") @db.VarChar(64)
+  categoryId           Int?                        @map("category_id")
+  toolId               Int?                        @map("tool_id")
+  limitCount           Int                         @default(10) @map("limit_count")
+  status               ContentGenerationTaskStatus @default(DRAFT)
+  sourceDataJson       Json?                       @map("source_data_json")
+  promptVersionId      Int?                        @map("prompt_version_id")
+  promptJson           Json?                       @map("prompt_json")
+  rawOutput            String?                     @map("raw_output")
+  generatedContentJson Json?                       @map("generated_content_json")
+  finalContentJson     Json?                       @map("final_content_json")
+  validationJson       Json?                       @map("validation_json")
+  errorMessage         String?                     @map("error_message")
+  rejectReason         String?                     @map("reject_reason")
+  contentPageId        Int?                        @map("content_page_id")
+  createdByAdminId     Int?                        @map("created_by_admin_id")
+  approvedByAdminId    Int?                        @map("approved_by_admin_id")
+  rejectedByAdminId    Int?                        @map("rejected_by_admin_id")
+  publishedByAdminId   Int?                        @map("published_by_admin_id")
+  generatedAt          DateTime?                   @map("generated_at") @db.Timestamp(3)
+  approvedAt           DateTime?                   @map("approved_at") @db.Timestamp(3)
+  rejectedAt           DateTime?                   @map("rejected_at") @db.Timestamp(3)
+  publishedAt          DateTime?                   @map("published_at") @db.Timestamp(3)
+  createdAt            DateTime                    @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt            DateTime                    @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  category         CategoryLevel2?                 @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  tool             AiTool?                         @relation(fields: [toolId], references: [id], onDelete: SetNull)
+  contentPage      ContentPage?                    @relation(fields: [contentPageId], references: [id], onDelete: SetNull)
+  promptVersion    ContentGenerationPromptVersion? @relation(fields: [promptVersionId], references: [id], onDelete: SetNull)
+  createdByAdmin   AdminUser?                      @relation("ContentGenerationTaskCreatedBy", fields: [createdByAdminId], references: [id], onDelete: SetNull)
+  approvedByAdmin  AdminUser?                      @relation("ContentGenerationTaskApprovedBy", fields: [approvedByAdminId], references: [id], onDelete: SetNull)
+  rejectedByAdmin  AdminUser?                      @relation("ContentGenerationTaskRejectedBy", fields: [rejectedByAdminId], references: [id], onDelete: SetNull)
+  publishedByAdmin AdminUser?                      @relation("ContentGenerationTaskPublishedBy", fields: [publishedByAdminId], references: [id], onDelete: SetNull)
+  events           ContentGenerationTaskEvent[]
+
+  @@index([status, contentType], map: "idx_content_generation_tasks_status_type")
+  @@index([categoryId], map: "idx_content_generation_tasks_category")
+  @@index([toolId], map: "idx_content_generation_tasks_tool")
+  @@index([contentPageId], map: "idx_content_generation_tasks_content_page")
+  @@index([createdAt], map: "idx_content_generation_tasks_created_at")
+  @@index([updatedAt], map: "idx_content_generation_tasks_updated_at")
+  @@map("content_generation_tasks")
+}
+
+model ContentGenerationTaskEvent {
+  id           Int                          @id @default(autoincrement())
+  taskId       Int                          @map("task_id")
+  actorAdminId Int?                         @map("actor_admin_id")
+  actorEmail   String?                      @map("actor_email") @db.VarChar(255)
+  eventType    String                       @map("event_type") @db.VarChar(64)
+  fromStatus   ContentGenerationTaskStatus? @map("from_status")
+  toStatus     ContentGenerationTaskStatus? @map("to_status")
+  message      String?
+  payload      Json?
+  createdAt    DateTime                     @default(now()) @map("created_at") @db.Timestamp(3)
+
+  task       ContentGenerationTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actorAdmin AdminUser?            @relation("ContentGenerationEventActor", fields: [actorAdminId], references: [id], onDelete: SetNull)
+
+  @@index([taskId], map: "idx_content_generation_task_events_task")
+  @@index([eventType], map: "idx_content_generation_task_events_type")
+  @@index([createdAt], map: "idx_content_generation_task_events_created_at")
+  @@map("content_generation_task_events")
+}
+
+model SlugReservation {
+  slug       String   @id
+  routeType  String   @map("route_type")
+  reservedBy String?  @map("reserved_by")
+  status     String   @default("ACTIVE")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt  DateTime @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  @@map("slug_reservations")
+}
+
+model Redirect {
+  fromPath   String   @id @map("from_path")
+  toPath     String   @map("to_path")
+  statusCode Int      @default(301) @map("status_code")
+  reason     String?
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt  DateTime @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  @@index([isActive], map: "idx_redirects_active")
+  @@map("redirects")
+}
+
+model ToolPricingPlan {
+  id              Int             @id @default(autoincrement())
+  toolId          Int             @map("tool_id")
+  planName        String          @map("plan_name")
+  price           Decimal?        @db.Decimal(10, 2)
+  currency        String?         @db.VarChar(3)
+  billingInterval BillingInterval @map("billing_interval")
+  isFree          Boolean         @default(false) @map("is_free")
+  hasTrial        Boolean         @default(false) @map("has_trial")
+  seatLimit       Int?            @map("seat_limit")
+  usageLimit      String?         @map("usage_limit")
+  features        String[]        @default([])
+  rawText         String?         @map("raw_text")
+  sourceId        Int?            @map("source_id")
+  verifiedAt      DateTime?       @map("verified_at") @db.Timestamp(3)
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt       DateTime        @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  tool   AiTool  @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  source Source? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@index([toolId], map: "idx_tool_pricing_plans_tool")
+  @@index([isFree], map: "idx_tool_pricing_plans_free")
+  @@index([verifiedAt], map: "idx_tool_pricing_plans_verified_at")
+  @@map("tool_pricing_plans")
+}
+
+model ToolClaim {
+  id         Int       @id @default(autoincrement())
+  toolId     Int       @map("tool_id")
+  claimType  String    @map("claim_type")
+  claimText  String    @map("claim_text")
+  valueJson  Json?     @map("value_json")
+  sourceId   Int?      @map("source_id")
+  confidence Decimal?  @db.Decimal(3, 2)
+  verifiedAt DateTime? @map("verified_at") @db.Timestamp(3)
+  expiresAt  DateTime? @map("expires_at") @db.Timestamp(3)
+  status     String    @default("ACTIVE")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  tool   AiTool  @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  source Source? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@index([toolId, claimType], map: "idx_tool_claims_tool_type")
+  @@index([status, expiresAt], map: "idx_tool_claims_status_expires")
+  @@map("tool_claims")
+}
+
+model ToolMedia {
+  id            Int       @id @default(autoincrement())
+  toolId        Int?      @map("tool_id")
+  contentPageId Int?      @map("content_page_id")
+  mediaType     MediaType @map("media_type")
+  url           String
+  alt           String?
+  caption       String?
+  sourceUrl     String?   @map("source_url")
+  width         Int?
+  height        Int?
+  sort          Int       @default(0)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  tool        AiTool?      @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  contentPage ContentPage? @relation(fields: [contentPageId], references: [id], onDelete: Cascade)
+
+  @@index([toolId, mediaType], map: "idx_tool_media_tool_type")
+  @@index([contentPageId, mediaType], map: "idx_tool_media_content_page_type")
+  @@map("tool_media")
+}
+
+model ToolSocialLink {
+  id         Int       @id @default(autoincrement())
+  toolId     Int       @map("tool_id")
+  linkType   String    @map("link_type")
+  label      String?
+  url        String?
+  email      String?
+  isPrimary  Boolean   @default(false) @map("is_primary")
+  sourceId   Int?      @map("source_id")
+  verifiedAt DateTime? @map("verified_at") @db.Timestamp(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  tool   AiTool  @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  source Source? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@index([toolId], map: "idx_tool_social_links_tool")
+  @@map("tool_social_links")
+}
+
+model ToolPlatform {
+  id         Int       @id @default(autoincrement())
+  toolId     Int       @map("tool_id")
+  platform   String
+  sourceId   Int?      @map("source_id")
+  verifiedAt DateTime? @map("verified_at") @db.Timestamp(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  tool   AiTool  @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  source Source? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@unique([toolId, platform], map: "tool_platforms_unique")
+  @@index([toolId], map: "idx_tool_platforms_tool")
+  @@map("tool_platforms")
+}
+
+model ToolTag {
+  id        Int      @id @default(autoincrement())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  assignments ToolTagAssignment[]
+
+  @@map("tool_tags")
+}
+
+model ToolTagAssignment {
+  toolId Int @map("tool_id")
+  tagId  Int @map("tag_id")
+
+  tool AiTool  @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  tag  ToolTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([toolId, tagId])
+  @@index([tagId], map: "idx_tool_tag_assignments_tag")
+  @@map("tool_tag_assignments")
+}
+
+model ReviewPage {
+  contentPageId      Int      @id @map("content_page_id")
+  toolId             Int      @map("tool_id")
+  verdict            String?
+  score              Decimal? @db.Decimal(3, 1)
+  scoreBreakdownJson Json?    @map("score_breakdown_json")
+  pros               String[] @default([])
+  cons               String[] @default([])
+  bestFor            String[] @default([]) @map("best_for")
+  notFor             String[] @default([]) @map("not_for")
+  methodologyJson    Json?    @map("methodology_json")
+
+  contentPage ContentPage @relation(fields: [contentPageId], references: [id], onDelete: Cascade)
+  tool        AiTool      @relation(fields: [toolId], references: [id], onDelete: Cascade)
+
+  @@index([toolId], map: "idx_review_pages_tool")
+  @@map("review_pages")
+}
+
+model TutorialPage {
+  contentPageId   Int             @id @map("content_page_id")
+  toolId          Int?            @map("tool_id")
+  categoryId      Int?            @map("category_id")
+  difficulty      DifficultyLevel
+  durationMinutes Int?            @map("duration_minutes")
+  outcome         String?
+  prerequisites   String[]        @default([])
+  stepsJson       Json            @map("steps_json")
+  faqJson         Json?           @map("faq_json")
+
+  contentPage ContentPage     @relation(fields: [contentPageId], references: [id], onDelete: Cascade)
+  tool        AiTool?         @relation(fields: [toolId], references: [id], onDelete: SetNull)
+  category    CategoryLevel2? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([toolId], map: "idx_tutorial_pages_tool")
+  @@index([categoryId], map: "idx_tutorial_pages_category")
+  @@index([difficulty], map: "idx_tutorial_pages_difficulty")
+  @@map("tutorial_pages")
+}
+
+model ComparisonPage {
+  contentPageId   Int            @id @map("content_page_id")
+  comparisonType  ComparisonType @map("comparison_type")
+  primaryToolId   Int?           @map("primary_tool_id")
+  secondaryToolId Int?           @map("secondary_tool_id")
+  categoryId      Int?           @map("category_id")
+  verdict         String?
+  criteriaJson    Json?          @map("criteria_json")
+  matrixJson      Json?          @map("matrix_json")
+  pricingSummary  String?        @map("pricing_summary")
+
+  contentPage   ContentPage      @relation(fields: [contentPageId], references: [id], onDelete: Cascade)
+  primaryTool   AiTool?          @relation("PrimaryComparisonTool", fields: [primaryToolId], references: [id], onDelete: SetNull)
+  secondaryTool AiTool?          @relation("SecondaryComparisonTool", fields: [secondaryToolId], references: [id], onDelete: SetNull)
+  category      CategoryLevel2?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  tools         ComparisonTool[]
+
+  @@index([comparisonType], map: "idx_comparison_pages_type")
+  @@index([primaryToolId], map: "idx_comparison_pages_primary_tool")
+  @@index([secondaryToolId], map: "idx_comparison_pages_secondary_tool")
+  @@index([categoryId], map: "idx_comparison_pages_category")
+  @@map("comparison_pages")
+}
+
+model ComparisonTool {
+  comparisonPageId Int     @map("comparison_page_id")
+  toolId           Int     @map("tool_id")
+  position         Int
+  label            String?
+  bestFor          String? @map("best_for")
+  summary          String?
+
+  comparisonPage ComparisonPage @relation(fields: [comparisonPageId], references: [contentPageId], onDelete: Cascade)
+  tool           AiTool         @relation(fields: [toolId], references: [id], onDelete: Cascade)
+
+  @@id([comparisonPageId, toolId])
+  @@unique([comparisonPageId, position], map: "ux_comparison_tools_parent_position")
+  @@index([toolId], map: "idx_comparison_tools_tool")
+  @@index([comparisonPageId, position], map: "idx_comparison_tools_position")
+  @@map("comparison_tools")
+}
+
+model AlternativePage {
+  contentPageId         Int     @id @map("content_page_id")
+  primaryToolId         Int     @map("primary_tool_id")
+  categoryId            Int?    @map("category_id")
+  reasonToSwitch        String? @map("reason_to_switch")
+  selectionCriteriaJson Json?   @map("selection_criteria_json")
+
+  contentPage  ContentPage       @relation(fields: [contentPageId], references: [id], onDelete: Cascade)
+  primaryTool  AiTool            @relation(fields: [primaryToolId], references: [id], onDelete: Cascade)
+  category     CategoryLevel2?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  alternatives AlternativeTool[]
+
+  @@index([primaryToolId], map: "idx_alternative_pages_primary_tool")
+  @@index([categoryId], map: "idx_alternative_pages_category")
+  @@map("alternative_pages")
+}
+
+model AlternativeTool {
+  alternativePageId Int     @map("alternative_page_id")
+  toolId            Int     @map("tool_id")
+  position          Int
+  reason            String?
+  bestFor           String? @map("best_for")
+  tradeoff          String?
+
+  alternativePage AlternativePage @relation(fields: [alternativePageId], references: [contentPageId], onDelete: Cascade)
+  tool            AiTool          @relation(fields: [toolId], references: [id], onDelete: Cascade)
+
+  @@id([alternativePageId, toolId])
+  @@unique([alternativePageId, position], map: "ux_alternative_tools_parent_position")
+  @@index([alternativePageId, position], map: "idx_alternative_tools_position")
+  @@index([toolId], map: "idx_alternative_tools_tool")
+  @@map("alternative_tools")
+}
+
+model Industry {
+  id        Int      @id @default(autoincrement())
+  name      String
+  slug      String   @unique
+  summary   String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  industryUseCasePages IndustryUseCasePage[]
+  workflowUseCases     WorkflowUseCase[]
+
+  @@index([isActive], map: "idx_industries_active")
+  @@map("industries")
+}
+
+model IndustryUseCasePage {
+  contentPageId          Int     @id @map("content_page_id")
+  industryId             Int     @map("industry_id")
+  categoryId             Int?    @map("category_id")
+  painPointsJson         Json?   @map("pain_points_json")
+  workflowsJson          Json?   @map("workflows_json")
+  complianceNotes        String? @map("compliance_notes")
+  implementationPlanJson Json?   @map("implementation_plan_json")
+
+  contentPage ContentPage     @relation(fields: [contentPageId], references: [id], onDelete: Cascade)
+  industry    Industry        @relation(fields: [industryId], references: [id], onDelete: Restrict)
+  category    CategoryLevel2? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([industryId], map: "idx_industry_use_case_pages_industry")
+  @@index([categoryId], map: "idx_industry_use_case_pages_category")
+  @@map("industry_use_case_pages")
+}
+
+model WorkflowUseCase {
+  id         Int      @id @default(autoincrement())
+  name       String
+  slug       String   @unique
+  summary    String?
+  categoryId Int?     @map("category_id")
+  industryId Int?     @map("industry_id")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt  DateTime @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  category CategoryLevel2?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  industry Industry?         @relation(fields: [industryId], references: [id], onDelete: SetNull)
+  toolFits ToolWorkflowFit[]
+
+  @@index([categoryId], map: "idx_workflow_use_cases_category")
+  @@index([industryId], map: "idx_workflow_use_cases_industry")
+  @@map("workflow_use_cases")
+}
+
+model ToolWorkflowFit {
+  toolId            Int      @map("tool_id")
+  workflowUseCaseId Int      @map("workflow_use_case_id")
+  fitScore          Decimal? @map("fit_score") @db.Decimal(3, 2)
+  fitReason         String?  @map("fit_reason")
+  caution           String?
+  sourceId          Int?     @map("source_id")
+
+  tool            AiTool          @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  workflowUseCase WorkflowUseCase @relation(fields: [workflowUseCaseId], references: [id], onDelete: Cascade)
+  source          Source?         @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@id([toolId, workflowUseCaseId])
+  @@index([workflowUseCaseId], map: "idx_tool_workflow_fits_workflow")
+  @@map("tool_workflow_fits")
+}
+
+model CategoryContentPage {
+  contentPageId Int  @id @map("content_page_id")
+  level1Id      Int? @map("level1_id")
+  level2Id      Int? @map("level2_id")
+
+  contentPage ContentPage     @relation(fields: [contentPageId], references: [id], onDelete: Cascade)
+  level1      CategoryLevel1? @relation(fields: [level1Id], references: [id], onDelete: Cascade)
+  level2      CategoryLevel2? @relation(fields: [level2Id], references: [id], onDelete: Cascade)
+
+  @@index([level1Id], map: "idx_category_content_pages_l1")
+  @@index([level2Id], map: "idx_category_content_pages_l2")
+  @@map("category_content_pages")
+}
+
+model CollectionPage {
+  contentPageId Int     @id @map("content_page_id")
+  level1Id      Int?    @map("level1_id")
+  filterJson    Json?   @map("filter_json")
+  isFeatured    Boolean @default(false) @map("is_featured")
+  featuredOrder Int     @default(0) @map("featured_order")
+  displayOrder  Int     @default(0) @map("display_order")
+
+  contentPage ContentPage      @relation(fields: [contentPageId], references: [id], onDelete: Cascade)
+  level1      CategoryLevel1?  @relation(fields: [level1Id], references: [id], onDelete: SetNull)
+  tools       CollectionTool[]
+
+  @@index([isFeatured, featuredOrder], map: "idx_collection_pages_featured")
+  @@map("collection_pages")
+}
+
+model CollectionTool {
+  collectionPageId Int     @map("collection_page_id")
+  toolId           Int     @map("tool_id")
+  position         Int
+  isFeatured       Boolean @default(false) @map("is_featured")
+  note             String?
+
+  collectionPage CollectionPage @relation(fields: [collectionPageId], references: [contentPageId], onDelete: Cascade)
+  tool           AiTool         @relation(fields: [toolId], references: [id], onDelete: Cascade)
+
+  @@id([collectionPageId, toolId])
+  @@unique([collectionPageId, position], map: "ux_collection_tools_parent_position")
+  @@index([collectionPageId, position], map: "idx_collection_tools_position")
+  @@map("collection_tools")
+}
+
+model InternalLink {
+  id           Int        @id @default(autoincrement())
+  sourcePageId Int?       @map("source_page_id")
+  targetPageId Int?       @map("target_page_id")
+  targetUrl    String?    @map("target_url")
+  anchorText   String     @map("anchor_text")
+  placement    String
+  reason       String?
+  priority     Int        @default(0)
+  status       LinkStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt    DateTime   @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  sourcePage ContentPage? @relation("InternalLinkSource", fields: [sourcePageId], references: [id], onDelete: Cascade)
+  targetPage ContentPage? @relation("InternalLinkTarget", fields: [targetPageId], references: [id], onDelete: SetNull)
+
+  @@index([sourcePageId, placement, status], map: "idx_internal_links_source_placement_status")
+  @@index([targetPageId], map: "idx_internal_links_target_page")
+  @@map("internal_links")
+}
+
+model InternalLinkRule {
+  id         Int      @id @default(autoincrement())
+  sourceType String   @map("source_type")
+  targetType String   @map("target_type")
+  placement  String
+  maxLinks   Int      @default(6) @map("max_links")
+  strategy   String
+  configJson Json?    @map("config_json")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt  DateTime @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  @@index([sourceType, targetType, isActive], map: "idx_internal_link_rules_active")
+  @@map("internal_link_rules")
+}
+
+model PageLinkSuggestion {
+  id           Int      @id @default(autoincrement())
+  sourcePageId Int      @map("source_page_id")
+  targetPageId Int?     @map("target_page_id")
+  targetUrl    String?  @map("target_url")
+  anchorText   String   @map("anchor_text")
+  placement    String
+  score        Decimal? @db.Decimal(5, 2)
+  reason       String?
+  status       String   @default("PENDING")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(3)
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamp(3)
+
+  sourcePage ContentPage  @relation("PageLinkSuggestionSource", fields: [sourcePageId], references: [id], onDelete: Cascade)
+  targetPage ContentPage? @relation("PageLinkSuggestionTarget", fields: [targetPageId], references: [id], onDelete: SetNull)
+
+  @@index([sourcePageId, status], map: "idx_page_link_suggestions_source")
+  @@index([targetPageId], map: "idx_page_link_suggestions_target")
+  @@map("page_link_suggestions")
+}
+
+model SeoAuditRun {
+  id          BigInt    @id @default(autoincrement())
+  startedAt   DateTime  @default(now()) @map("started_at") @db.Timestamp(3)
+  finishedAt  DateTime? @map("finished_at") @db.Timestamp(3)
+  status      String    @default("RUNNING")
+  configJson  Json?     @map("config_json")
+  summaryJson Json?     @map("summary_json")
+
+  issues SeoAuditIssue[]
+
+  @@map("seo_audit_runs")
+}
+
+model SeoAuditIssue {
+  id            BigInt        @id @default(autoincrement())
+  runId         BigInt        @map("run_id")
+  contentPageId Int?          @map("content_page_id")
+  url           String?
+  issueCode     String        @map("issue_code")
+  severity      AuditSeverity
+  message       String
+  detailsJson   Json?         @map("details_json")
+  isResolved    Boolean       @default(false) @map("is_resolved")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamp(3)
+  resolvedAt    DateTime?     @map("resolved_at") @db.Timestamp(3)
+
+  run         SeoAuditRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  contentPage ContentPage? @relation(fields: [contentPageId], references: [id], onDelete: SetNull)
+
+  @@index([runId], map: "idx_seo_audit_issues_run")
+  @@index([contentPageId], map: "idx_seo_audit_issues_page")
+  @@index([isResolved, severity], map: "idx_seo_audit_issues_unresolved")
+  @@map("seo_audit_issues")
+}
+
+model SourceCheckRun {
+  id          BigInt    @id @default(autoincrement())
+  startedAt   DateTime  @default(now()) @map("started_at") @db.Timestamp(3)
+  finishedAt  DateTime? @map("finished_at") @db.Timestamp(3)
+  status      String    @default("RUNNING")
+  summaryJson Json?     @map("summary_json")
+
+  issues SourceCheckIssue[]
+
+  @@map("source_check_runs")
+}
+
+model SourceCheckIssue {
+  id          BigInt        @id @default(autoincrement())
+  runId       BigInt        @map("run_id")
+  sourceId    Int?          @map("source_id")
+  url         String?
+  issueCode   String        @map("issue_code")
+  severity    AuditSeverity
+  message     String
+  httpStatus  Int?          @map("http_status")
+  detailsJson Json?         @map("details_json")
+  isResolved  Boolean       @default(false) @map("is_resolved")
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamp(3)
+  resolvedAt  DateTime?     @map("resolved_at") @db.Timestamp(3)
+
+  run    SourceCheckRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  source Source?        @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@index([runId], map: "idx_source_check_issues_run")
+  @@index([sourceId], map: "idx_source_check_issues_source")
+  @@index([isResolved, severity], map: "idx_source_check_issues_unresolved")
+  @@map("source_check_issues")
 }

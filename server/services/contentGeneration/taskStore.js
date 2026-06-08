@@ -1,8 +1,5 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
 import { createError } from 'h3'
-
-const STORE_FILE = join(process.cwd(), 'server', 'storage', 'content-generation-tasks.json')
+import prisma from '~/server/utils/prisma'
 
 export const CONTENT_GENERATION_STATUSES = [
   'draft',
@@ -15,31 +12,67 @@ export const CONTENT_GENERATION_STATUSES = [
   'published',
 ]
 
+const STATUS_TO_DB = {
+  draft: 'DRAFT',
+  pending: 'PENDING',
+  generating: 'GENERATING',
+  failed: 'FAILED',
+  review: 'REVIEW',
+  approved: 'APPROVED',
+  rejected: 'REJECTED',
+  published: 'PUBLISHED',
+}
+
+const DB_TO_STATUS = Object.fromEntries(
+  Object.entries(STATUS_TO_DB).map(([key, value]) => [value, key]),
+)
+
+const CONTENT_TYPE_TO_DB = {
+  collection: 'COLLECTION',
+  tool_review: 'TOOL_REVIEW',
+  tutorial: 'TUTORIAL',
+  comparison: 'COMPARISON',
+  alternative: 'ALTERNATIVE',
+  industry_use_case: 'INDUSTRY_USE_CASE',
+  workflow_use_case: 'WORKFLOW_USE_CASE',
+  category_guide: 'CATEGORY_GUIDE',
+  buyer_guide: 'BUYER_GUIDE',
+  pricing_guide: 'PRICING_GUIDE',
+  methodology: 'METHODOLOGY',
+}
+
+const DB_TO_CONTENT_TYPE = Object.fromEntries(
+  Object.entries(CONTENT_TYPE_TO_DB).map(([key, value]) => [value, key]),
+)
+
 export function isValidContentGenerationStatus(status) {
   return CONTENT_GENERATION_STATUSES.includes(status)
 }
 
-async function readRows() {
-  try {
-    const raw = await readFile(STORE_FILE, 'utf8')
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+function normalizeStatus(status, fallback = 'draft') {
+  const raw = String(status || fallback).trim().toLowerCase()
+  if (!isValidContentGenerationStatus(raw)) {
+    return null
   }
-  catch (error) {
-    if (error?.code === 'ENOENT') {
-      return []
-    }
-    throw error
-  }
+  return raw
 }
 
-async function writeRows(rows) {
-  await mkdir(dirname(STORE_FILE), { recursive: true })
-  await writeFile(STORE_FILE, `${JSON.stringify(rows, null, 2)}\n`, 'utf8')
+function toDbStatus(status) {
+  const normalized = normalizeStatus(status)
+  return normalized ? STATUS_TO_DB[normalized] : null
 }
 
-function nextId(rows) {
-  return rows.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0) + 1
+function toDbContentType(value) {
+  const raw = String(value || '').trim()
+  if (!raw) {
+    return 'BUYER_GUIDE'
+  }
+  const lower = raw.toLowerCase()
+  return CONTENT_TYPE_TO_DB[lower] || raw.toUpperCase()
+}
+
+function fromDbContentType(value) {
+  return DB_TO_CONTENT_TYPE[value] || String(value || '').toLowerCase()
 }
 
 function normalizeJson(value) {
@@ -49,209 +82,402 @@ function normalizeJson(value) {
   return value
 }
 
-export async function listContentGenerationTasks({ page = 1, pageSize = 20, status = '', keyword = '' } = {}) {
-  const rows = await readRows()
-  const q = String(keyword || '').trim().toLowerCase()
-  const filtered = rows.filter((row) => {
-    if (status && row.status !== status) {
-      return false
-    }
-    if (!q) {
-      return true
-    }
-    return [row.title, row.slug, row.contentType, row.targetType]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(q))
+function normalizeOptionalNumber(value) {
+  if (value === undefined || value === null || value === '') {
+    return null
+  }
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+function normalizeLimit(value) {
+  return Math.min(30, Math.max(1, Number(value) || 10))
+}
+
+function actorId(auth) {
+  const id = Number(auth?.id ?? auth?.sub)
+  return Number.isFinite(id) ? id : null
+}
+
+function actorEmail(auth) {
+  return typeof auth?.email === 'string' ? auth.email : null
+}
+
+function serializeTask(row) {
+  if (!row) return null
+  const status = DB_TO_STATUS[row.status] || String(row.status || '').toLowerCase()
+  const contentType = fromDbContentType(row.contentType)
+  return {
+    id: row.id,
+    title: row.title,
+    slug: row.slug || '',
+    contentType,
+    content_type: contentType,
+    targetType: row.targetType || '',
+    target_type: row.targetType || '',
+    categoryId: row.categoryId,
+    category_id: row.categoryId,
+    toolId: row.toolId,
+    tool_id: row.toolId,
+    limit: row.limitCount,
+    limitCount: row.limitCount,
+    limit_count: row.limitCount,
+    status,
+    contentJson: row.finalContentJson || row.generatedContentJson,
+    content_json: row.finalContentJson || row.generatedContentJson,
+    generatedContent: row.generatedContentJson,
+    generated_content: row.generatedContentJson,
+    finalContent: row.finalContentJson,
+    final_content: row.finalContentJson,
+    sourceDataJson: row.sourceDataJson,
+    source_data_json: row.sourceDataJson,
+    promptVersionId: row.promptVersionId,
+    prompt_version_id: row.promptVersionId,
+    promptJson: row.promptJson,
+    prompt_json: row.promptJson,
+    rawOutput: row.rawOutput || '',
+    raw_output: row.rawOutput || '',
+    validationJson: row.validationJson,
+    validation_json: row.validationJson,
+    errorMessage: row.errorMessage || '',
+    error_message: row.errorMessage || '',
+    rejectReason: row.rejectReason || '',
+    reject_reason: row.rejectReason || '',
+    contentPageId: row.contentPageId,
+    content_page_id: row.contentPageId,
+    createdByUserId: row.createdByAdminId,
+    createdByAdminId: row.createdByAdminId,
+    created_by_admin_id: row.createdByAdminId,
+    approvedByAdminId: row.approvedByAdminId,
+    rejectedByAdminId: row.rejectedByAdminId,
+    publishedByAdminId: row.publishedByAdminId,
+    generatedAt: row.generatedAt,
+    generated_at: row.generatedAt,
+    approvedAt: row.approvedAt,
+    approved_at: row.approvedAt,
+    rejectedAt: row.rejectedAt,
+    rejected_at: row.rejectedAt,
+    publishedAt: row.publishedAt,
+    published_at: row.publishedAt,
+    createdAt: row.createdAt,
+    created_at: row.createdAt,
+    updatedAt: row.updatedAt,
+    updated_at: row.updatedAt,
+  }
+}
+
+async function createTaskEvent(tx, taskId, {
+  auth,
+  eventType,
+  fromStatus,
+  toStatus,
+  message = '',
+  payload,
+} = {}) {
+  await tx.contentGenerationTaskEvent.create({
+    data: {
+      taskId: Number(taskId),
+      actorAdminId: actorId(auth),
+      actorEmail: actorEmail(auth),
+      eventType,
+      fromStatus: fromStatus ? toDbStatus(fromStatus) : null,
+      toStatus: toStatus ? toDbStatus(toStatus) : null,
+      message,
+      payload: normalizeJson(payload),
+    },
   })
+}
+
+export async function listContentGenerationTasks({ page = 1, pageSize = 20, status = '', keyword = '' } = {}) {
   const safePage = Math.max(1, Number(page) || 1)
   const safePageSize = Math.min(100, Math.max(1, Number(pageSize) || 20))
-  const start = (safePage - 1) * safePageSize
+  const normalizedStatus = status ? normalizeStatus(status) : ''
+  const q = String(keyword || '').trim()
+
+  const where = {
+    ...(normalizedStatus ? { status: STATUS_TO_DB[normalizedStatus] } : {}),
+    ...(q
+      ? {
+          OR: [
+            { title: { contains: q, mode: 'insensitive' } },
+            { slug: { contains: q, mode: 'insensitive' } },
+            { targetType: { contains: q, mode: 'insensitive' } },
+          ],
+        }
+      : {}),
+  }
+
+  const [total, rows] = await Promise.all([
+    prisma.contentGenerationTask.count({ where }),
+    prisma.contentGenerationTask.findMany({
+      where,
+      skip: (safePage - 1) * safePageSize,
+      take: safePageSize,
+      orderBy: { updatedAt: 'desc' },
+    }),
+  ])
 
   return {
-    data: filtered.slice(start, start + safePageSize),
-    total: filtered.length,
+    data: rows.map(serializeTask),
+    total,
     page: safePage,
     pageSize: safePageSize,
   }
 }
 
 export async function getContentGenerationTask(id) {
-  const rows = await readRows()
-  return rows.find((row) => Number(row.id) === Number(id)) || null
+  const row = await prisma.contentGenerationTask.findUnique({
+    where: { id: Number(id) },
+  })
+  return serializeTask(row)
 }
 
 export async function listContentGenerationTasksByIds(ids = []) {
-  const normalizedIds = new Set(ids.map((id) => Number(id)).filter((id) => Number.isFinite(id)))
-  if (!normalizedIds.size) {
+  const normalizedIds = [...new Set(ids.map((id) => Number(id)).filter((id) => Number.isFinite(id)))]
+  if (!normalizedIds.length) {
     return []
   }
 
-  const rows = await readRows()
-  return rows.filter((row) => normalizedIds.has(Number(row.id)))
+  const rows = await prisma.contentGenerationTask.findMany({
+    where: { id: { in: normalizedIds } },
+  })
+  return rows.map(serializeTask)
 }
 
 export async function createContentGenerationTask(input, auth) {
-  const rows = await readRows()
-  const now = new Date().toISOString()
   const title = String(input.title || '').trim()
   if (!title) {
     throw createError({ statusCode: 400, statusMessage: '任务标题必填' })
   }
 
-  const status = input.status || 'draft'
-  if (!isValidContentGenerationStatus(status)) {
+  const status = normalizeStatus(input.status || 'draft')
+  if (!status) {
     throw createError({ statusCode: 400, statusMessage: '任务状态无效' })
   }
 
-  const row = {
-    id: nextId(rows),
-    title,
-    slug: String(input.slug || '').trim(),
-    contentType: String(input.contentType || '').trim(),
-    targetType: String(input.targetType || '').trim(),
-    categoryId: input.categoryId == null || input.categoryId === '' ? null : Number(input.categoryId),
-    toolId: input.toolId == null || input.toolId === '' ? null : Number(input.toolId),
-    limit: Math.min(30, Math.max(1, Number(input.limit) || 10)),
-    status,
-    contentJson: normalizeJson(input.contentJson),
-    generatedContent: normalizeJson(input.generatedContent),
-    generated_content: normalizeJson(input.generatedContent),
-    finalContent: normalizeJson(input.finalContent || input.contentJson),
-    final_content: normalizeJson(input.finalContent || input.contentJson),
-    sourceDataJson: normalizeJson(input.sourceDataJson),
-    rawOutput: typeof input.rawOutput === 'string' ? input.rawOutput : '',
-    validationJson: normalizeJson(input.validationJson),
-    errorMessage: typeof input.errorMessage === 'string' ? input.errorMessage : '',
-    error_message: typeof input.errorMessage === 'string' ? input.errorMessage : '',
-    createdByUserId: auth?.id ?? null,
-    createdByEmail: auth?.email || '',
-    createdAt: now,
-    updatedAt: now,
-  }
+  const created = await prisma.$transaction(async (tx) => {
+    const row = await tx.contentGenerationTask.create({
+      data: {
+        title,
+        slug: String(input.slug || '').trim() || null,
+        contentType: toDbContentType(input.contentType || input.content_type),
+        targetType: String(input.targetType || input.target_type || '').trim() || null,
+        categoryId: normalizeOptionalNumber(input.categoryId ?? input.category_id),
+        toolId: normalizeOptionalNumber(input.toolId ?? input.tool_id),
+        limitCount: normalizeLimit(input.limit ?? input.limitCount ?? input.limit_count),
+        status: STATUS_TO_DB[status],
+        sourceDataJson: normalizeJson(input.sourceDataJson ?? input.source_data_json),
+        promptJson: normalizeJson(input.promptJson ?? input.prompt_json),
+        rawOutput: typeof input.rawOutput === 'string' ? input.rawOutput : '',
+        generatedContentJson: normalizeJson(input.generatedContent ?? input.generated_content),
+        finalContentJson: normalizeJson(input.finalContent ?? input.final_content ?? input.contentJson ?? input.content_json),
+        validationJson: normalizeJson(input.validationJson ?? input.validation_json),
+        errorMessage: typeof input.errorMessage === 'string' ? input.errorMessage : '',
+        createdByAdminId: actorId(auth),
+      },
+    })
+    await createTaskEvent(tx, row.id, {
+      auth,
+      eventType: 'created',
+      toStatus: status,
+      message: 'Task created',
+      payload: { title: row.title },
+    })
+    return row
+  })
 
-  rows.unshift(row)
-  await writeRows(rows)
-  return row
+  return serializeTask(created)
 }
 
-export async function updateContentGenerationTask(id, input) {
-  const rows = await readRows()
-  const index = rows.findIndex((row) => Number(row.id) === Number(id))
-  if (index < 0) {
+export async function updateContentGenerationTask(id, input, auth) {
+  const current = await prisma.contentGenerationTask.findUnique({ where: { id: Number(id) } })
+  if (!current) {
     throw createError({ statusCode: 404, statusMessage: '任务不存在' })
   }
 
-  const current = rows[index]
-  const next = {
-    ...current,
-    title: input.title !== undefined ? String(input.title || '').trim() : current.title,
-    slug: input.slug !== undefined ? String(input.slug || '').trim() : current.slug,
-    contentType: input.contentType !== undefined ? String(input.contentType || '').trim() : current.contentType,
-    targetType: input.targetType !== undefined ? String(input.targetType || '').trim() : current.targetType,
-    categoryId: input.categoryId !== undefined
-      ? (input.categoryId == null || input.categoryId === '' ? null : Number(input.categoryId))
-      : current.categoryId,
-    toolId: input.toolId !== undefined
-      ? (input.toolId == null || input.toolId === '' ? null : Number(input.toolId))
-      : current.toolId,
-    limit: input.limit !== undefined ? Math.min(30, Math.max(1, Number(input.limit) || 10)) : current.limit,
-    contentJson: input.contentJson !== undefined ? normalizeJson(input.contentJson) : current.contentJson,
-    generatedContent: input.generatedContent !== undefined ? normalizeJson(input.generatedContent) : current.generatedContent,
-    generated_content: input.generatedContent !== undefined ? normalizeJson(input.generatedContent) : current.generated_content,
-    finalContent: input.finalContent !== undefined
-      ? normalizeJson(input.finalContent)
-      : (input.contentJson !== undefined ? normalizeJson(input.contentJson) : current.finalContent),
-    final_content: input.finalContent !== undefined
-      ? normalizeJson(input.finalContent)
-      : (input.contentJson !== undefined ? normalizeJson(input.contentJson) : current.final_content),
-    sourceDataJson: input.sourceDataJson !== undefined ? normalizeJson(input.sourceDataJson) : current.sourceDataJson,
-    rawOutput: input.rawOutput !== undefined ? String(input.rawOutput || '') : current.rawOutput,
-    validationJson: input.validationJson !== undefined ? normalizeJson(input.validationJson) : current.validationJson,
-    errorMessage: input.errorMessage !== undefined ? String(input.errorMessage || '') : current.errorMessage,
-    error_message: input.errorMessage !== undefined ? String(input.errorMessage || '') : current.error_message,
-    updatedAt: new Date().toISOString(),
+  const data = {}
+  if (input.title !== undefined) data.title = String(input.title || '').trim()
+  if (input.slug !== undefined) data.slug = String(input.slug || '').trim() || null
+  if (input.contentType !== undefined || input.content_type !== undefined) {
+    data.contentType = toDbContentType(input.contentType ?? input.content_type)
   }
-
-  if (!next.title) {
+  if (input.targetType !== undefined || input.target_type !== undefined) {
+    data.targetType = String((input.targetType ?? input.target_type) || '').trim() || null
+  }
+  if (input.categoryId !== undefined || input.category_id !== undefined) {
+    data.categoryId = normalizeOptionalNumber(input.categoryId ?? input.category_id)
+  }
+  if (input.toolId !== undefined || input.tool_id !== undefined) {
+    data.toolId = normalizeOptionalNumber(input.toolId ?? input.tool_id)
+  }
+  if (input.limit !== undefined || input.limitCount !== undefined || input.limit_count !== undefined) {
+    data.limitCount = normalizeLimit(input.limit ?? input.limitCount ?? input.limit_count)
+  }
+  if (input.contentJson !== undefined || input.content_json !== undefined) {
+    data.finalContentJson = normalizeJson(input.contentJson ?? input.content_json)
+  }
+  if (input.generatedContent !== undefined || input.generated_content !== undefined) {
+    data.generatedContentJson = normalizeJson(input.generatedContent ?? input.generated_content)
+  }
+  if (input.finalContent !== undefined || input.final_content !== undefined) {
+    data.finalContentJson = normalizeJson(input.finalContent ?? input.final_content)
+  }
+  if (input.sourceDataJson !== undefined || input.source_data_json !== undefined) {
+    data.sourceDataJson = normalizeJson(input.sourceDataJson ?? input.source_data_json)
+  }
+  if (input.promptJson !== undefined || input.prompt_json !== undefined) {
+    data.promptJson = normalizeJson(input.promptJson ?? input.prompt_json)
+  }
+  if (input.rawOutput !== undefined || input.raw_output !== undefined) {
+    data.rawOutput = String((input.rawOutput ?? input.raw_output) || '')
+  }
+  if (input.validationJson !== undefined || input.validation_json !== undefined) {
+    data.validationJson = normalizeJson(input.validationJson ?? input.validation_json)
+  }
+  if (input.errorMessage !== undefined || input.error_message !== undefined) {
+    data.errorMessage = String((input.errorMessage ?? input.error_message) || '')
+  }
+  if (!Object.keys(data).length) {
+    return serializeTask(current)
+  }
+  if (data.title !== undefined && !data.title) {
     throw createError({ statusCode: 400, statusMessage: '任务标题必填' })
   }
 
-  rows[index] = next
-  await writeRows(rows)
-  return next
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.contentGenerationTask.update({
+      where: { id: Number(id) },
+      data: {
+        ...data,
+        updatedAt: new Date(),
+      },
+    })
+    await createTaskEvent(tx, row.id, {
+      auth,
+      eventType: 'updated',
+      fromStatus: DB_TO_STATUS[current.status],
+      toStatus: DB_TO_STATUS[row.status],
+      message: 'Task updated',
+      payload: { fields: Object.keys(data) },
+    })
+    return row
+  })
+
+  return serializeTask(updated)
 }
 
-export async function updateContentGenerationTaskStatus(id, status) {
-  if (!isValidContentGenerationStatus(status)) {
+export async function updateContentGenerationTaskStatus(id, status, auth) {
+  const normalizedStatus = normalizeStatus(status)
+  if (!normalizedStatus) {
     throw createError({ statusCode: 400, statusMessage: '任务状态无效' })
   }
 
-  const rows = await readRows()
-  const index = rows.findIndex((row) => Number(row.id) === Number(id))
-  if (index < 0) {
+  const current = await prisma.contentGenerationTask.findUnique({ where: { id: Number(id) } })
+  if (!current) {
     throw createError({ statusCode: 404, statusMessage: '任务不存在' })
   }
 
-  rows[index] = {
-    ...rows[index],
-    status,
-    updatedAt: new Date().toISOString(),
-  }
-  await writeRows(rows)
-  return rows[index]
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.contentGenerationTask.update({
+      where: { id: Number(id) },
+      data: {
+        status: STATUS_TO_DB[normalizedStatus],
+        updatedAt: new Date(),
+      },
+    })
+    await createTaskEvent(tx, row.id, {
+      auth,
+      eventType: 'status_changed',
+      fromStatus: DB_TO_STATUS[current.status],
+      toStatus: normalizedStatus,
+      message: 'Task status changed',
+    })
+    return row
+  })
+
+  return serializeTask(updated)
 }
 
-export async function saveContentGenerationTaskGenerationResult(id, input) {
-  const rows = await readRows()
-  const index = rows.findIndex((row) => Number(row.id) === Number(id))
-  if (index < 0) {
+export async function saveContentGenerationTaskGenerationResult(id, input, auth) {
+  const normalizedStatus = normalizeStatus(input.status)
+  if (!normalizedStatus) {
+    throw createError({ statusCode: 400, statusMessage: '任务状态无效' })
+  }
+
+  const current = await prisma.contentGenerationTask.findUnique({ where: { id: Number(id) } })
+  if (!current) {
     throw createError({ statusCode: 404, statusMessage: '任务不存在' })
   }
 
   const errorMessage = typeof input.errorMessage === 'string' ? input.errorMessage : ''
-  rows[index] = {
-    ...rows[index],
-    status: input.status,
-    contentJson: input.contentJson !== undefined ? normalizeJson(input.contentJson) : rows[index].contentJson,
-    generatedContent: input.contentJson !== undefined ? normalizeJson(input.contentJson) : rows[index].generatedContent,
-    generated_content: input.contentJson !== undefined ? normalizeJson(input.contentJson) : rows[index].generated_content,
-    finalContent: input.contentJson !== undefined ? normalizeJson(input.contentJson) : rows[index].finalContent,
-    final_content: input.contentJson !== undefined ? normalizeJson(input.contentJson) : rows[index].final_content,
-    sourceDataJson: input.sourceDataJson !== undefined ? normalizeJson(input.sourceDataJson) : rows[index].sourceDataJson,
-    rawOutput: input.rawOutput !== undefined ? String(input.rawOutput || '') : rows[index].rawOutput,
-    validationJson: input.validationJson !== undefined ? normalizeJson(input.validationJson) : rows[index].validationJson,
-    errorMessage,
-    error_message: errorMessage,
-    updatedAt: new Date().toISOString(),
-  }
-  await writeRows(rows)
-  return rows[index]
+  const now = new Date()
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.contentGenerationTask.update({
+      where: { id: Number(id) },
+      data: {
+        status: STATUS_TO_DB[normalizedStatus],
+        generatedContentJson: input.contentJson !== undefined ? normalizeJson(input.contentJson) : current.generatedContentJson,
+        finalContentJson: input.contentJson !== undefined ? normalizeJson(input.contentJson) : current.finalContentJson,
+        sourceDataJson: input.sourceDataJson !== undefined ? normalizeJson(input.sourceDataJson) : current.sourceDataJson,
+        rawOutput: input.rawOutput !== undefined ? String(input.rawOutput || '') : current.rawOutput,
+        validationJson: input.validationJson !== undefined ? normalizeJson(input.validationJson) : current.validationJson,
+        errorMessage,
+        generatedAt: normalizedStatus === 'review' || normalizedStatus === 'failed' ? now : current.generatedAt,
+        updatedAt: now,
+      },
+    })
+    await createTaskEvent(tx, row.id, {
+      auth,
+      eventType: normalizedStatus === 'failed' ? 'generation_failed' : 'generated',
+      fromStatus: DB_TO_STATUS[current.status],
+      toStatus: normalizedStatus,
+      message: errorMessage || 'Generation completed',
+      payload: {
+        hasRawOutput: Boolean(row.rawOutput),
+        validation: row.validationJson,
+      },
+    })
+    return row
+  })
+
+  return serializeTask(updated)
 }
 
-export async function approveContentGenerationTask(id) {
-  const rows = await readRows()
-  const index = rows.findIndex((row) => Number(row.id) === Number(id))
-  if (index < 0) {
+export async function approveContentGenerationTask(id, auth) {
+  const current = await prisma.contentGenerationTask.findUnique({ where: { id: Number(id) } })
+  if (!current) {
     throw createError({ statusCode: 404, statusMessage: '任务不存在' })
   }
-  if (rows[index].status !== 'review') {
+  if (current.status !== 'REVIEW') {
     throw createError({ statusCode: 400, statusMessage: '只有待审核内容可以审核通过' })
   }
 
-  rows[index] = {
-    ...rows[index],
-    status: 'approved',
-    approvedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  }
-  await writeRows(rows)
-  return rows[index]
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.contentGenerationTask.update({
+      where: { id: Number(id) },
+      data: {
+        status: 'APPROVED',
+        approvedByAdminId: actorId(auth),
+        approvedAt: new Date(),
+        updatedAt: new Date(),
+      },
+    })
+    await createTaskEvent(tx, row.id, {
+      auth,
+      eventType: 'approved',
+      fromStatus: 'review',
+      toStatus: 'approved',
+      message: 'Task approved',
+    })
+    return row
+  })
+
+  return serializeTask(updated)
 }
 
-export async function rejectContentGenerationTask(id, reason) {
-  const rows = await readRows()
-  const index = rows.findIndex((row) => Number(row.id) === Number(id))
-  if (index < 0) {
+export async function rejectContentGenerationTask(id, reason, auth) {
+  const current = await prisma.contentGenerationTask.findUnique({ where: { id: Number(id) } })
+  if (!current) {
     throw createError({ statusCode: 404, statusMessage: '任务不存在' })
   }
   const rejectReason = String(reason || '').trim()
@@ -259,33 +485,58 @@ export async function rejectContentGenerationTask(id, reason) {
     throw createError({ statusCode: 400, statusMessage: '请填写驳回原因' })
   }
 
-  rows[index] = {
-    ...rows[index],
-    status: 'rejected',
-    rejectReason,
-    reject_reason: rejectReason,
-    rejectedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  }
-  await writeRows(rows)
-  return rows[index]
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.contentGenerationTask.update({
+      where: { id: Number(id) },
+      data: {
+        status: 'REJECTED',
+        rejectReason,
+        rejectedByAdminId: actorId(auth),
+        rejectedAt: new Date(),
+        updatedAt: new Date(),
+      },
+    })
+    await createTaskEvent(tx, row.id, {
+      auth,
+      eventType: 'rejected',
+      fromStatus: DB_TO_STATUS[current.status],
+      toStatus: 'rejected',
+      message: rejectReason,
+    })
+    return row
+  })
+
+  return serializeTask(updated)
 }
 
-export async function markContentGenerationTaskPublished(id, publishedContent) {
-  const rows = await readRows()
-  const index = rows.findIndex((row) => Number(row.id) === Number(id))
-  if (index < 0) {
+export async function markContentGenerationTaskPublished(id, publishedContent, auth, contentPageId = null) {
+  const current = await prisma.contentGenerationTask.findUnique({ where: { id: Number(id) } })
+  if (!current) {
     throw createError({ statusCode: 404, statusMessage: '任务不存在' })
   }
 
-  rows[index] = {
-    ...rows[index],
-    status: 'published',
-    finalContent: publishedContent,
-    final_content: publishedContent,
-    publishedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  }
-  await writeRows(rows)
-  return rows[index]
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.contentGenerationTask.update({
+      where: { id: Number(id) },
+      data: {
+        status: 'PUBLISHED',
+        finalContentJson: normalizeJson(publishedContent),
+        contentPageId: contentPageId || current.contentPageId,
+        publishedByAdminId: actorId(auth),
+        publishedAt: new Date(),
+        updatedAt: new Date(),
+      },
+    })
+    await createTaskEvent(tx, row.id, {
+      auth,
+      eventType: 'published',
+      fromStatus: DB_TO_STATUS[current.status],
+      toStatus: 'published',
+      message: 'Task published',
+      payload: { contentPageId: row.contentPageId },
+    })
+    return row
+  })
+
+  return serializeTask(updated)
 }

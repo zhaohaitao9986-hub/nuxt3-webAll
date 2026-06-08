@@ -13,6 +13,7 @@ export const editorialSystemPrompt = [
   'You must return exactly one valid JSON object and no surrounding text.',
   'If source data is insufficient for a claim, omit the claim or qualify it clearly.',
   `Never use forbidden phrases: ${FORBIDDEN_CLAIM_LABELS.join(', ')}.`,
+  'Do not use the words "best" or "always" anywhere in the JSON. Use cautious alternatives such as "suitable", "right fit", "typically", "often", or "review".',
   QUALITATIVE_PRICING_POLICY,
   'Generated content must enter human review and must not be published directly.',
 ].join('\n')
@@ -118,6 +119,7 @@ export function buildGuideUserPrompt(sourceData) {
     '- Per tool: if hasPricingPlans is false, no plan/credit/seat/trial specifics; if hasClaims is false, no integration/language-count/feature assertions unless in other tool fields',
     '- metaTitle/metaDescription: no tool names (category-level wording only)',
     '- FAQ: no "best/top/#1" ranking questions; use evaluation-style questions',
+    '- Replace forbidden wording before returning JSON: "best" -> "suitable" or "right fit"; "always" -> "typically", "often", or "review"; "never" -> "avoid" or "rarely"',
     '',
     'Block shape reference:',
     JSON.stringify(contentRules.guides.blockSchemas, null, 2),
@@ -167,6 +169,7 @@ export function buildCompareUserPrompt(sourceData) {
     '- comparisonTools / alternativeTools toolId values must exist in source',
     `- Forbidden words: ${FORBIDDEN_CLAIM_LABELS.join(', ')}`,
     `- Pricing: ${QUALITATIVE_PRICING_POLICY}`,
+    '- Replace forbidden wording before returning JSON: "best" -> "suitable" or "right fit"; "always" -> "typically", "often", or "review"; "never" -> "avoid" or "rarely"',
     '',
     'Block shape reference:',
     JSON.stringify(contentRules.compare.blockSchemas, null, 2),

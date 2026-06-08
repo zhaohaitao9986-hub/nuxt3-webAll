@@ -10,7 +10,7 @@ const userStore = useUserStore()
 const filters = reactive({
   name: '',
   categoryId: '',
-  status: '',
+  toolStatus: '',
 })
 
 const list = ref([])
@@ -22,9 +22,10 @@ const loading = ref(false)
 const categoryOptions = ref([])
 const statusOptions = [
   { label: '全部', value: '' },
-  { label: '草稿', value: '0' },
-  { label: '已发布', value: '1' },
-  { label: '已下架', value: '-1' },
+  { label: '已发布', value: 'ACTIVE' },
+  { label: '草稿', value: 'DRAFT' },
+  { label: '已下架', value: 'ARCHIVED' },
+  { label: '离线', value: 'OFFLINE' },
 ]
 
 const statusLoading = reactive({})
@@ -48,7 +49,7 @@ function formatDt(iso) {
 }
 
 function logoSrc(row) {
-  return row.image || row.website_logo || ''
+  return row.image || row.websiteLogo || ''
 }
 
 async function loadCategories() {
@@ -74,8 +75,8 @@ async function loadList() {
     if (filters.categoryId !== '' && filters.categoryId != null) {
       query.categoryId = filters.categoryId
     }
-    if (filters.status !== '' && filters.status != null) {
-      query.status = Number(filters.status)
+    if (filters.toolStatus !== '' && filters.toolStatus != null) {
+      query.toolStatus = filters.toolStatus
     }
     const res = await useAdminFetch('/api/admin/tools', { query })
     list.value = res.data || []
@@ -102,7 +103,7 @@ function onSearch() {
 function onReset() {
   filters.name = ''
   filters.categoryId = ''
-  filters.status = ''
+  filters.toolStatus = ''
   page.value = 1
   loadList()
 }
@@ -120,14 +121,14 @@ function onSizeChange(s) {
 
 async function onStatusChange(row, published) {
   const id = row.id
-  const next = published ? 1 : 0
+  const next = published ? 'ACTIVE' : 'DRAFT'
   statusLoading[id] = true
   try {
     await useAdminFetch(`/api/admin/tools/${id}`, {
       method: 'PUT',
-      body: { status: next },
+      body: { toolStatus: next },
     })
-    row.status = next
+    row.toolStatus = next
     ElMessage.success('状态已更新')
   }
   catch (e) {
@@ -216,7 +217,7 @@ onMounted(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" placeholder="全部" clearable style="width: 140px">
+          <el-select v-model="filters.toolStatus" placeholder="全部" clearable style="width: 140px">
             <el-option
               v-for="opt in statusOptions"
               :key="String(opt.value)"
@@ -268,7 +269,7 @@ onMounted(() => {
         <el-table-column label="状态" width="100" align="center">
           <template #default="{ row }">
             <el-switch
-              :model-value="row.status === 1"
+              :model-value="row.toolStatus === 'ACTIVE'"
               :loading="!!statusLoading[row.id]"
               inline-prompt
               active-text="发"
@@ -284,7 +285,7 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="创建时间" width="168">
           <template #default="{ row }">
-            {{ formatDt(row.created_at) }}
+            {{ formatDt(row.createdAt) }}
           </template>
         </el-table-column>
         <el-table-column label="操作" width="160" fixed="right" align="center">

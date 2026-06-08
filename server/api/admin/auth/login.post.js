@@ -18,7 +18,7 @@ export default defineEventHandler(async (event) => {
   const { jwtSecret: cfgSecret } = useRuntimeConfig()
   const secret = cfgSecret || process.env.JWT_SECRET || 'dev-admin-jwt-secret-change-in-production'
 
-  const user = await prisma.user.findUnique({ where: { email } })
+  const user = await prisma.adminUser.findUnique({ where: { email } })
 
   if (!user || !user.isActive) {
     throw createError({ statusCode: 401, statusMessage: '账号或密码错误' })
@@ -28,10 +28,15 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 403, statusMessage: '无后台访问权限' })
   }
 
-  const ok = await bcrypt.compare(password, user.password)
+  const ok = await bcrypt.compare(password, user.passwordHash)
   if (!ok) {
     throw createError({ statusCode: 401, statusMessage: '账号或密码错误' })
   }
+
+  await prisma.adminUser.update({
+    where: { id: user.id },
+    data: { lastLoginAt: new Date() },
+  })
 
   const token = jwt.sign(
     { sub: user.id, email: user.email, role: user.role },

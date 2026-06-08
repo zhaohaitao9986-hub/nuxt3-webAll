@@ -19,6 +19,56 @@ function normalizeCategoryIds(body) {
   return single !== undefined ? [single] : []
 }
 
+function normalizeToolStatus(value) {
+  if (value === undefined || value === null || String(value) === '') {
+    return 'ACTIVE'
+  }
+  const raw = String(value).trim().toUpperCase()
+  if (raw === '1' || raw === 'ACTIVE') return 'ACTIVE'
+  if (raw === '0' || raw === 'DRAFT') return 'DRAFT'
+  if (raw === '-1' || raw === 'ARCHIVED') return 'ARCHIVED'
+  if (raw === 'OFFLINE') return 'OFFLINE'
+  return 'ACTIVE'
+}
+
+function normalizeStringArray(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean)
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map((item) => item.trim()).filter(Boolean)
+  }
+  return []
+}
+
+function serializeToolRow(row) {
+  const { monthVisitedCount, ...rest } = row
+  return {
+    ...rest,
+    collected_count: row.collectedCount,
+    month_visited_count: String(monthVisitedCount ?? 0),
+    what_is_summary: row.whatIsSummary,
+    is_ad: row.isAd,
+    website_name: row.websiteName,
+    is_free: row.isFree,
+    website_logo: row.websiteLogo,
+    tool_info_review: row.toolInfoReview != null ? row.toolInfoReview.toString() : null,
+    add_time: row.addTime,
+    website_type: row.websiteType || [],
+    social_email: row.socialEmail || [],
+    for_jobs: row.forJobs || [],
+    use_cases: row.useCases || [],
+    company_info: row.companyInfo,
+    recommend_learn: row.recommendLearn || [],
+    status: row.toolStatus === 'ACTIVE' ? 1 : row.toolStatus === 'DRAFT' ? 0 : -1,
+    sort_weight: row.rank ?? 0,
+    seo_title: row.seoMetaTitle,
+    seo_keywords: Array.isArray(row.seoMetaKeywords) ? row.seoMetaKeywords.join(', ') : '',
+    created_at: row.createdAt,
+    updated_at: row.updatedAt,
+  }
+}
+
 export default defineEventHandler(async (event) => {
   assertAnyAdmin(event)
   const body = await readBody(event)
@@ -56,20 +106,22 @@ export default defineEventHandler(async (event) => {
         : typeof b.website_logo === 'string'
           ? b.website_logo
           : null,
-    website_logo: typeof b.website_logo === 'string' ? b.website_logo : null,
-    website_name: typeof b.website_name === 'string' ? b.website_name : null,
-    what_is_summary: typeof b.what_is_summary === 'string' ? b.what_is_summary : null,
-    status: parseOptionalInt(b.status) ?? 1,
-    is_free: Boolean(b.is_free),
-    is_ad: Boolean(b.is_ad),
-    seo_title: typeof b.seo_title === 'string' ? b.seo_title : null,
-    seo_keywords: typeof b.seo_keywords === 'string' ? b.seo_keywords : null,
+    websiteLogo: typeof b.website_logo === 'string' ? b.website_logo : null,
+    websiteName: typeof b.website_name === 'string' ? b.website_name : null,
+    whatIsSummary: typeof b.what_is_summary === 'string' ? b.what_is_summary : null,
+    toolStatus: normalizeToolStatus(b.toolStatus ?? b.status),
+    isFree: Boolean(b.isFree ?? b.is_free),
+    isAd: Boolean(b.isAd ?? b.is_ad),
+    seoMetaTitle: typeof (b.seoMetaTitle ?? b.seo_title) === 'string' ? (b.seoMetaTitle ?? b.seo_title) : null,
+    seoMetaDescription: typeof (b.seoMetaDescription ?? b.seo_meta_description) === 'string' ? (b.seoMetaDescription ?? b.seo_meta_description) : null,
+    seoMetaKeywords: normalizeStringArray(b.seoMetaKeywords ?? b.seo_keywords),
     pros: Array.isArray(b.pros) ? b.pros : [],
     cons: Array.isArray(b.cons) ? b.cons : [],
     pricing: Array.isArray(b.pricing) ? b.pricing : [],
     faq: b.faq ?? null,
-    views: parseOptionalInt(b.views) ?? 0,
-    sort_weight: parseOptionalInt(b.sort_weight) ?? 0,
+    companyInfo: typeof b.company_info === 'string' ? b.company_info : null,
+    addTime: typeof b.add_time === 'string' ? b.add_time : null,
+    rank: parseOptionalInt(b.rank ?? b.sort_weight) ?? 0,
   }
 
   try {
@@ -109,11 +161,7 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 500, statusMessage: 'Create failed' })
     }
 
-    return {
-      ...tool,
-      month_visited_count: String(tool.month_visited_count),
-      tool_info_review: tool.tool_info_review != null ? tool.tool_info_review.toString() : null,
-    }
+    return serializeToolRow(tool)
   }
   catch (e) {
     const err = e

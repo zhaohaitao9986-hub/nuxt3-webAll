@@ -66,13 +66,13 @@ async function callAi(prompt, event) {
   }
 }
 
-export async function generateContentForTask(taskId, event) {
+export async function generateContentForTask(taskId, event, auth) {
   const task = await getContentGenerationTask(taskId)
   if (!task) {
     throw createError({ statusCode: 404, statusMessage: '任务不存在' })
   }
 
-  await updateContentGenerationTaskStatus(taskId, 'generating')
+  await updateContentGenerationTaskStatus(taskId, 'generating', auth)
 
   let sourceData = null
   let rawOutput = ''
@@ -109,7 +109,7 @@ export async function generateContentForTask(taskId, event) {
         generatedAt: new Date().toISOString(),
       },
       errorMessage: '',
-    })
+    }, auth)
   }
   catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -124,7 +124,7 @@ export async function generateContentForTask(taskId, event) {
         failedAt: new Date().toISOString(),
       },
       errorMessage: message,
-    })
+    }, auth)
     throw createError({ statusCode: 500, statusMessage: message })
   }
 }

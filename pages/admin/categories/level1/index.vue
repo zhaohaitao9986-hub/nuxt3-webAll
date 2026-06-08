@@ -35,7 +35,7 @@ const form = reactive({
   name: '',
   handle: '',
   sort: 0,
-  is_active: true,
+  isActive: true,
 })
 
 const handleLocked = ref(false)
@@ -125,7 +125,7 @@ function openCreate() {
   form.name = ''
   form.handle = ''
   form.sort = 0
-  form.is_active = true
+  form.isActive = true
   dialogVisible.value = true
   nextTick(() => formRef.value?.clearValidate?.())
 }
@@ -136,7 +136,7 @@ function openEdit(row) {
   form.name = row.name
   form.handle = row.handle
   form.sort = row.sort ?? 0
-  form.is_active = row.is_active
+  form.isActive = row.isActive
   dialogVisible.value = true
   nextTick(() => formRef.value?.clearValidate?.())
 }
@@ -166,7 +166,7 @@ async function saveDialog() {
           name: form.name.trim(),
           handle: form.handle.trim(),
           sort: form.sort,
-          is_active: form.is_active,
+          isActive: form.isActive,
         },
       })
       ElMessage.success('已创建')
@@ -178,7 +178,7 @@ async function saveDialog() {
           name: form.name.trim(),
           handle: form.handle.trim(),
           sort: form.sort,
-          is_active: form.is_active,
+          isActive: form.isActive,
         },
       })
       ElMessage.success('已保存')
@@ -203,9 +203,9 @@ async function onActiveChange(row, val) {
   try {
     await useAdminFetch(`/api/admin/categories/level1/${id}`, {
       method: 'PUT',
-      body: { is_active: val },
+      body: { isActive: val },
     })
-    row.is_active = val
+    row.isActive = val
     ElMessage.success('已更新')
   }
   catch (e) {
@@ -306,7 +306,7 @@ onMounted(loadList)
         <el-table-column label="启用" width="88" align="center">
           <template #default="{ row }">
             <el-switch
-              :model-value="row.is_active"
+              :model-value="row.isActive"
               :loading="!!switchLoading[row.id]"
               @change="(v) => onActiveChange(row, v)"
             />
@@ -361,7 +361,7 @@ onMounted(loadList)
           <el-input-number v-model="form.sort" :min="0" :max="999999" />
         </el-form-item>
         <el-form-item label="启用">
-          <el-switch v-model="form.is_active" />
+          <el-switch v-model="form.isActive" />
         </el-form-item>
       </el-form>
       <template #footer>

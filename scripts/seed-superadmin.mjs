@@ -41,9 +41,9 @@ const SUPERADMIN = {
 }
 
 async function main() {
-  const legacy = await prisma.user.findUnique({ where: { email: LEGACY_EMAIL } })
+  const legacy = await prisma.adminUser.findUnique({ where: { email: LEGACY_EMAIL } })
   if (legacy) {
-    await prisma.user.update({
+    await prisma.adminUser.update({
       where: { email: LEGACY_EMAIL },
       data: { email: SUPERADMIN.email },
     })
@@ -51,18 +51,18 @@ async function main() {
   }
 
   const hash = await bcrypt.hash(SUPERADMIN.passwordPlain, 10)
-  const row = await prisma.user.upsert({
+  const row = await prisma.adminUser.upsert({
     where: { email: SUPERADMIN.email },
     create: {
       name: SUPERADMIN.name,
       email: SUPERADMIN.email,
-      password: hash,
+      passwordHash: hash,
       role: SUPERADMIN.role,
       isActive: true,
     },
     update: {
       name: SUPERADMIN.name,
-      password: hash,
+      passwordHash: hash,
       role: SUPERADMIN.role,
       isActive: true,
     },

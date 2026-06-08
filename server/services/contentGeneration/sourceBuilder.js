@@ -26,7 +26,47 @@ function mapCategory(row, parent = null) {
   }
 }
 
+function mapSource(source, context = '', sort = 0) {
+  if (!source?.url) return null
+  return {
+    id: source.id,
+    url: source.url,
+    domain: source.domain || safeDomain(source.url),
+    title: source.title || '',
+    sourceType: source.sourceType || 'OTHER',
+    retrievedAt: source.retrievedAt || null,
+    context,
+    sort,
+  }
+}
+
 function mapTool(tool) {
+  const pricingPlans = (tool.pricingPlans || []).map((plan) => ({
+    id: plan.id,
+    planName: plan.planName,
+    price: toNumber(plan.price),
+    currency: plan.currency,
+    billingInterval: plan.billingInterval,
+    isFree: plan.isFree,
+    hasTrial: plan.hasTrial,
+    seatLimit: plan.seatLimit,
+    usageLimit: plan.usageLimit,
+    features: plan.features || [],
+    rawText: plan.rawText,
+    verifiedAt: plan.verifiedAt || null,
+  }))
+  const claims = (tool.claims || []).map((claim) => ({
+    id: claim.id,
+    claimType: claim.claimType,
+    claimText: claim.claimText,
+    valueJson: claim.valueJson,
+    confidence: toNumber(claim.confidence),
+    verifiedAt: claim.verifiedAt || null,
+    expiresAt: claim.expiresAt || null,
+    status: claim.status,
+  }))
+  const normalizedPlatforms = (tool.platforms || []).map((item) => item.platform).filter(Boolean)
+
   return {
     id: tool.id,
     handle: tool.handle,
@@ -34,38 +74,61 @@ function mapTool(tool) {
     description: tool.description,
     website: tool.website,
     pricing: tool.pricing || [],
-    pricingPlans: [],
-    claims: [],
-    platforms: tool.website_type || [],
+    pricingPlans,
+    claims,
+    platforms: normalizedPlatforms.length ? normalizedPlatforms : (tool.websiteType || []),
+    socialLinks: (tool.socialLinks || []).map((link) => ({
+      linkType: link.linkType,
+      label: link.label,
+      url: link.url,
+      email: link.email,
+      isPrimary: link.isPrimary,
+      verifiedAt: link.verifiedAt || null,
+    })),
     pros: tool.pros || [],
     cons: tool.cons || [],
     features: tool.feature || [],
-    rating: toNumber(tool.tool_info_review),
-    monthlyVisits: toNumber(tool.month_visited_count) || 0,
-    whatIsSummary: tool.what_is_summary,
+    rating: toNumber(tool.toolInfoReview),
+    monthlyVisits: toNumber(tool.monthVisitedCount) || 0,
+    whatIsSummary: tool.whatIsSummary,
     tags: tool.tags || [],
-    useCases: tool.use_cases || [],
-    forJobs: tool.for_jobs || [],
-    companyInfo: tool.company_info,
-    isFree: tool.is_free,
+    useCases: tool.useCases || [],
+    forJobs: tool.forJobs || [],
+    companyInfo: tool.companyInfo,
+    isFree: tool.isFree,
   }
 }
 
 function collectSources(tools) {
   const sources = []
   const seen = new Set()
+  function push(source) {
+    if (!source?.url || seen.has(source.url)) return
+    seen.add(source.url)
+    sources.push({ ...source, sort: sources.length + 1 })
+  }
+
   for (const tool of tools) {
-    if (!tool.website || seen.has(tool.website)) continue
-    seen.add(tool.website)
-    sources.push({
+    push({
       url: tool.website,
       domain: safeDomain(tool.website),
       title: tool.name,
       sourceType: 'OFFICIAL_SITE',
       retrievedAt: null,
       context: `Official website for ${tool.name}`,
-      sort: sources.length + 1,
     })
+    for (const plan of tool.pricingPlans || []) {
+      push(mapSource(plan.source, `Pricing source for ${tool.name}`, sources.length + 1))
+    }
+    for (const claim of tool.claims || []) {
+      push(mapSource(claim.source, `Claim source for ${tool.name}: ${claim.claimType}`, sources.length + 1))
+    }
+    for (const platform of tool.platforms || []) {
+      push(mapSource(platform.source, `Platform source for ${tool.name}`, sources.length + 1))
+    }
+    for (const link of tool.socialLinks || []) {
+      push(mapSource(link.source, `Social/contact source for ${tool.name}`, sources.length + 1))
+    }
   }
   return sources
 }
@@ -87,10 +150,10 @@ async function fetchCategory(categoryId) {
       id: true,
       name: true,
       handle: true,
-      what_is_summary: true,
+      whatIsSummary: true,
       feature: true,
-      who_is_use: true,
-      how_do_work: true,
+      whoIsUse: true,
+      howDoWork: true,
       advantages: true,
       faq: true,
       level1: { select: { id: true, name: true, handle: true } },
@@ -110,11 +173,11 @@ async function fetchRelatedCategories(categoryId) {
     : null
   const rows = await prisma.categoryLevel2.findMany({
     where: {
-      is_active: true,
+      isActive: true,
       ...(current?.level1Id ? { level1Id: current.level1Id } : {}),
       ...(categoryId ? { NOT: { id: Number(categoryId) } } : {}),
     },
-    orderBy: [{ tool_count: 'desc' }, { sort: 'desc' }, { id: 'asc' }],
+    orderBy: [{ toolCount: 'desc' }, { sort: 'desc' }, { id: 'asc' }],
     take: 8,
     select: {
       id: true,
@@ -129,7 +192,7 @@ async function fetchRelatedCategories(categoryId) {
 async function fetchTools(task) {
   const limit = Math.min(30, Math.max(1, Number(task.limit) || 10))
   const where = {
-    status: 1,
+    toolStatus: { in: ['ONLINE', 'ACTIVE'] },
     handle: { not: '' },
     name: { not: '' },
     ...(task.toolId ? { id: Number(task.toolId) } : {}),
@@ -137,7 +200,28 @@ async function fetchTools(task) {
   }
   return prisma.aiTool.findMany({
     where,
-    orderBy: [{ sort_weight: 'desc' }, { month_visited_count: 'desc' }, { updated_at: 'desc' }],
+    orderBy: [{ rank: 'asc' }, { monthVisitedCount: 'desc' }, { updatedAt: 'desc' }],
+    include: {
+      pricingPlans: {
+        orderBy: [{ isFree: 'desc' }, { price: 'asc' }, { id: 'asc' }],
+        take: 6,
+        include: { source: true },
+      },
+      claims: {
+        where: { status: 'ACTIVE' },
+        orderBy: [{ confidence: 'desc' }, { id: 'asc' }],
+        take: 12,
+        include: { source: true },
+      },
+      platforms: {
+        orderBy: [{ platform: 'asc' }],
+        include: { source: true },
+      },
+      socialLinks: {
+        orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }],
+        include: { source: true },
+      },
+    },
     take: limit,
   })
 }
@@ -220,8 +304,11 @@ function buildCompareSourceData(task, category, tools, relatedCategories) {
     category: category?.level2 || null,
     categoryTopTools: mappedTools,
     relatedCategories,
-    knownPricing: mappedTools.flatMap((tool) => tool.pricing || []).filter(Boolean),
-    knownClaims: [],
+    knownPricing: mappedTools.flatMap((tool) => [
+      ...(tool.pricing || []),
+      ...(tool.pricingPlans || []).map((plan) => plan.rawText || plan.planName).filter(Boolean),
+    ]),
+    knownClaims: mappedTools.flatMap((tool) => tool.claims || []),
     sources: collectSources(tools),
     requiredCriteria: ['Ease of use', 'Output quality', 'Integrations', 'Pricing', 'Best fit'],
   }

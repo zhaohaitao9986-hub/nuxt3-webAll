@@ -1,6 +1,13 @@
 import prisma from '~/server/utils/prisma'
 import { assertAnyAdmin } from '~/server/utils/requireAdminRole'
 
+function serialize(row) {
+  return {
+    ...row,
+    is_active: row.isActive,
+  }
+}
+
 export default defineEventHandler(async (event) => {
   assertAnyAdmin(event)
   const query = getQuery(event)
@@ -16,7 +23,7 @@ export default defineEventHandler(async (event) => {
     where.name = { contains: name, mode: 'insensitive' }
   }
   if (isActive !== undefined) {
-    where.is_active = isActive
+    where.isActive = isActive
   }
 
   const [total, rows] = await Promise.all([
@@ -29,5 +36,5 @@ export default defineEventHandler(async (event) => {
     }),
   ])
 
-  return { data: rows, total, page, pageSize }
+  return { data: rows.map(serialize), total, page, pageSize }
 })

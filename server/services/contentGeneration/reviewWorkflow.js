@@ -62,15 +62,15 @@ export function validateBeforePublish(task) {
   }
 }
 
-export async function approveTaskForReview(taskId) {
-  return approveContentGenerationTask(taskId)
+export async function approveTaskForReview(taskId, auth) {
+  return approveContentGenerationTask(taskId, auth)
 }
 
-export async function rejectTaskForReview(taskId, reason) {
-  return rejectContentGenerationTask(taskId, reason)
+export async function rejectTaskForReview(taskId, reason, auth) {
+  return rejectContentGenerationTask(taskId, reason, auth)
 }
 
-export async function publishApprovedTask(taskId) {
+export async function publishApprovedTask(taskId, auth) {
   const task = await getContentGenerationTask(taskId)
   if (!task) {
     throw createError({ statusCode: 404, statusMessage: '任务不存在' })
@@ -80,6 +80,6 @@ export async function publishApprovedTask(taskId) {
   }
 
   const finalContent = validateBeforePublish(task)
-  await upsertPublishedContentFromTask(task, finalContent)
-  return markContentGenerationTaskPublished(taskId, finalContent)
+  const contentPage = await upsertPublishedContentFromTask(task, finalContent)
+  return markContentGenerationTaskPublished(taskId, finalContent, auth, contentPage.id)
 }

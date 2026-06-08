@@ -34,15 +34,15 @@ const form = reactive({
   name: '',
   website: '',
   handle: '',
-  is_free: false,
-  is_ad: false,
+  isFree: false,
+  isAd: false,
   categoryIds: [],
   description: '',
   pros: [],
   cons: [],
   pricing: [],
-  seo_title: '',
-  seo_keywords: '',
+  seoMetaTitle: '',
+  seoMetaKeywords: '',
 })
 
 const faqRows = ref([])
@@ -122,15 +122,15 @@ function resetFormForCreate() {
   form.name = ''
   form.website = ''
   form.handle = ''
-  form.is_free = false
-  form.is_ad = false
+  form.isFree = false
+  form.isAd = false
   form.categoryIds = []
   form.description = ''
   form.pros = []
   form.cons = []
   form.pricing = []
-  form.seo_title = ''
-  form.seo_keywords = ''
+  form.seoMetaTitle = ''
+  form.seoMetaKeywords = ''
   faqRows.value = []
 }
 
@@ -149,14 +149,14 @@ function applyToolToForm(row) {
   form.name = row.name ?? ''
   form.website = row.website ?? ''
   form.handle = row.handle ?? ''
-  form.is_free = Boolean(row.is_free)
-  form.is_ad = Boolean(row.is_ad)
+  form.isFree = Boolean(row.isFree)
+  form.isAd = Boolean(row.isAd)
   form.description = row.description ?? ''
   form.pros = Array.isArray(row.pros) ? [...row.pros] : []
   form.cons = Array.isArray(row.cons) ? [...row.cons] : []
   form.pricing = Array.isArray(row.pricing) ? [...row.pricing] : []
-  form.seo_title = row.seo_title ?? ''
-  form.seo_keywords = row.seo_keywords ?? ''
+  form.seoMetaTitle = row.seoMetaTitle ?? ''
+  form.seoMetaKeywords = Array.isArray(row.seoMetaKeywords) ? row.seoMetaKeywords.join(', ') : (row.seoMetaKeywords ?? '')
   form.categoryIds = Array.isArray(row.categoryIds) ? [...row.categoryIds] : []
   faqRows.value = faqJsonToRows(row.faq)
   if (!faqRows.value.length) {
@@ -206,14 +206,14 @@ async function onSubmit() {
     handle: form.handle.trim(),
     website: form.website?.trim() || null,
     description: form.description?.trim() || null,
-    is_free: form.is_free,
-    is_ad: form.is_ad,
+    isFree: form.isFree,
+    isAd: form.isAd,
     categoryIds: form.categoryIds,
     pros: form.pros,
     cons: form.cons,
     pricing: form.pricing,
-    seo_title: form.seo_title?.trim() || null,
-    seo_keywords: form.seo_keywords?.trim() || null,
+    seoMetaTitle: form.seoMetaTitle?.trim() || null,
+    seoMetaKeywords: form.seoMetaKeywords?.trim() || null,
     faq,
   }
 
@@ -333,10 +333,10 @@ onMounted(async () => {
               </el-select>
             </el-form-item>
             <el-form-item label="免费工具">
-              <el-switch v-model="form.is_free" />
+              <el-switch v-model="form.isFree" />
             </el-form-item>
             <el-form-item label="推广 / 广告">
-              <el-switch v-model="form.is_ad" />
+              <el-switch v-model="form.isAd" />
             </el-form-item>
           </el-tab-pane>
 
@@ -388,10 +388,10 @@ onMounted(async () => {
 
           <el-tab-pane label="SEO 与其他" name="seo">
             <el-form-item label="SEO 标题">
-              <el-input v-model="form.seo_title" placeholder="独立 title" clearable maxlength="200" show-word-limit />
+              <el-input v-model="form.seoMetaTitle" placeholder="独立 title" clearable maxlength="200" show-word-limit />
             </el-form-item>
             <el-form-item label="SEO 关键词">
-              <el-input v-model="form.seo_keywords" placeholder="英文逗号分隔" clearable maxlength="500" show-word-limit />
+              <el-input v-model="form.seoMetaKeywords" placeholder="英文逗号分隔" clearable maxlength="500" show-word-limit />
             </el-form-item>
             <el-form-item label="FAQ">
               <div class="faq-editor">

@@ -14,12 +14,12 @@ export default defineEventHandler(async (event) => {
   ] = await Promise.all([
     prisma.aiTool.count(),
     prisma.user.count(),
-    prisma.user.count({
+    prisma.adminUser.count({
       where: { role: { in: ['ADMIN', 'SUPERADMIN'] } },
     }),
     prisma.categoryLevel1.count(),
     prisma.categoryLevel2.count(),
-    prisma.aiTool.count({ where: { status: 1 } }),
+    prisma.aiTool.count({ where: { toolStatus: 'ACTIVE' } }),
   ])
 
   return {

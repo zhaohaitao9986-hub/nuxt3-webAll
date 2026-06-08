@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Invalid id' })
   }
 
-  const existing = await prisma.user.findUnique({ where: { id } })
+  const existing = await prisma.adminUser.findUnique({ where: { id } })
   if (!existing) {
     throw createError({ statusCode: 404, statusMessage: 'Not found' })
   }
@@ -28,11 +28,11 @@ export default defineEventHandler(async (event) => {
 
   if ('role' in body) {
     const r = body.role
-    if (r !== 'USER' && r !== 'ADMIN' && r !== 'SUPERADMIN') {
+    if (r !== 'ADMIN' && r !== 'SUPERADMIN') {
       throw createError({ statusCode: 400, statusMessage: 'role 无效' })
     }
     if (existing.role === 'SUPERADMIN' && r !== 'SUPERADMIN') {
-      const cnt = await prisma.user.count({ where: { role: 'SUPERADMIN' } })
+      const cnt = await prisma.adminUser.count({ where: { role: 'SUPERADMIN' } })
       if (cnt <= 1) {
         throw createError({ statusCode: 400, statusMessage: '不能降级或删除唯一的超级管理员' })
       }
@@ -43,7 +43,7 @@ export default defineEventHandler(async (event) => {
   if ('isActive' in body) {
     const nextActive = Boolean(body.isActive)
     if (existing.role === 'SUPERADMIN' && !nextActive) {
-      const cnt = await prisma.user.count({
+      const cnt = await prisma.adminUser.count({
         where: { role: 'SUPERADMIN', isActive: true },
       })
       if (cnt <= 1 && existing.isActive) {
@@ -58,14 +58,14 @@ export default defineEventHandler(async (event) => {
     if (plain.length < 6) {
       throw createError({ statusCode: 400, statusMessage: '密码至少 6 位' })
     }
-    updateData.password = await bcrypt.hash(plain, 10)
+    updateData.passwordHash = await bcrypt.hash(plain, 10)
   }
 
   if (Object.keys(updateData).length === 0) {
     throw createError({ statusCode: 400, statusMessage: '没有可更新字段' })
   }
 
-  const row = await prisma.user.update({
+  const row = await prisma.adminUser.update({
     where: { id },
     data: updateData,
     select: {

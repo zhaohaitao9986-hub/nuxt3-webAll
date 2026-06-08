@@ -1,6 +1,17 @@
 import prisma from '~/server/utils/prisma'
 import { assertAnyAdmin } from '~/server/utils/requireAdminRole'
 
+function serialize(row) {
+  return {
+    ...row,
+    tool_count: row.toolCount,
+    is_active: row.isActive,
+    what_is_summary: row.whatIsSummary,
+    who_is_use: row.whoIsUse,
+    how_do_work: row.howDoWork,
+  }
+}
+
 export default defineEventHandler(async (event) => {
   assertAnyAdmin(event)
   const id = Number(getRouterParam(event, 'id'))
@@ -47,8 +58,8 @@ export default defineEventHandler(async (event) => {
     const s = Number(body.sort)
     updateData.sort = Number.isNaN(s) ? 0 : s
   }
-  if ('is_active' in body) {
-    updateData.is_active = Boolean(body.is_active)
+  if ('is_active' in body || 'isActive' in body) {
+    updateData.isActive = Boolean(body.isActive ?? body.is_active)
   }
 
   if (Object.keys(updateData).length === 0) {
@@ -65,7 +76,7 @@ export default defineEventHandler(async (event) => {
         },
       },
     })
-    return row
+    return serialize(row)
   }
   catch (e) {
     if (e?.code === 'P2002') {

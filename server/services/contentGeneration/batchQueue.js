@@ -11,7 +11,7 @@ function normalizeIds(ids) {
     .filter((id) => Number.isFinite(id)))]
 }
 
-export async function batchGenerateContentTasks(input, event) {
+export async function batchGenerateContentTasks(input, event, auth) {
   const ids = normalizeIds(input?.ids)
   if (!ids.length) {
     throw createError({ statusCode: 400, statusMessage: '请选择需要批量生成的任务' })
@@ -36,7 +36,7 @@ export async function batchGenerateContentTasks(input, event) {
       const id = ids[cursor]
       cursor += 1
       try {
-        const task = await generateContentForTask(id, event)
+        const task = await generateContentForTask(id, event, auth)
         results.push({
           id,
           ok: true,

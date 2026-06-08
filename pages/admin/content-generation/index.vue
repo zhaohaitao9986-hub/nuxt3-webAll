@@ -170,7 +170,7 @@ async function loadOptions() {
   try {
     const [categoriesRes, toolsRes] = await Promise.all([
       adminAxios.get('/api/admin/categories/options'),
-      adminAxios.get('/api/admin/tools', { params: { page: 1, pageSize: 100, status: 1 } }),
+      adminAxios.get('/api/admin/tools', { params: { page: 1, pageSize: 100, toolStatus: 'ACTIVE' } }),
     ])
     categoryOptions.value = categoriesRes.data?.data || []
     toolOptions.value = toolsRes.data?.data || []

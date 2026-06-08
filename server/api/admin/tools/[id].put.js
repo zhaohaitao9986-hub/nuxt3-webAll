@@ -9,6 +9,56 @@ function parseOptionalInt(v) {
   return Number.isNaN(n) ? undefined : n
 }
 
+function normalizeToolStatus(value) {
+  if (value === undefined || value === null || String(value) === '') {
+    return undefined
+  }
+  const raw = String(value).trim().toUpperCase()
+  if (raw === '1' || raw === 'ACTIVE') return 'ACTIVE'
+  if (raw === '0' || raw === 'DRAFT') return 'DRAFT'
+  if (raw === '-1' || raw === 'ARCHIVED') return 'ARCHIVED'
+  if (raw === 'OFFLINE') return 'OFFLINE'
+  return undefined
+}
+
+function normalizeStringArray(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean)
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map((item) => item.trim()).filter(Boolean)
+  }
+  return []
+}
+
+function serializeToolRow(row) {
+  const { monthVisitedCount, ...rest } = row
+  return {
+    ...rest,
+    collected_count: row.collectedCount,
+    month_visited_count: String(monthVisitedCount ?? 0),
+    what_is_summary: row.whatIsSummary,
+    is_ad: row.isAd,
+    website_name: row.websiteName,
+    is_free: row.isFree,
+    website_logo: row.websiteLogo,
+    tool_info_review: row.toolInfoReview != null ? row.toolInfoReview.toString() : null,
+    add_time: row.addTime,
+    website_type: row.websiteType || [],
+    social_email: row.socialEmail || [],
+    for_jobs: row.forJobs || [],
+    use_cases: row.useCases || [],
+    company_info: row.companyInfo,
+    recommend_learn: row.recommendLearn || [],
+    status: row.toolStatus === 'ACTIVE' ? 1 : row.toolStatus === 'DRAFT' ? 0 : -1,
+    sort_weight: row.rank ?? 0,
+    seo_title: row.seoMetaTitle,
+    seo_keywords: Array.isArray(row.seoMetaKeywords) ? row.seoMetaKeywords.join(', ') : '',
+    created_at: row.createdAt,
+    updated_at: row.updatedAt,
+  }
+}
+
 export default defineEventHandler(async (event) => {
   assertAnyAdmin(event)
   const id = Number(getRouterParam(event, 'id'))
@@ -30,19 +80,19 @@ export default defineEventHandler(async (event) => {
 
   const updateData = {}
 
-  const assignString = (key, optional = true) => {
-    if (!(key in b)) {
+  const assignString = (inputKey, dataKey = inputKey, optional = true) => {
+    if (!(inputKey in b)) {
       return
     }
-    const v = b[key]
+    const v = b[inputKey]
     if (v === '' || v === null) {
       if (optional) {
-        updateData[key] = null
+        updateData[dataKey] = null
       }
       return
     }
     if (typeof v === 'string') {
-      updateData[key] = v
+      updateData[dataKey] = v
     }
   }
 
@@ -62,38 +112,37 @@ export default defineEventHandler(async (event) => {
   assignString('website')
   assignString('description')
   assignString('image')
-  assignString('website_logo')
-  assignString('website_name')
-  assignString('what_is_summary')
-  assignString('seo_title')
-  assignString('seo_keywords')
-  assignString('company_info')
-  assignString('add_time')
+  assignString('website_logo', 'websiteLogo')
+  assignString('website_name', 'websiteName')
+  assignString('what_is_summary', 'whatIsSummary')
+  assignString('seo_title', 'seoMetaTitle')
+  assignString('seoMetaTitle')
+  assignString('seo_meta_description', 'seoMetaDescription')
+  assignString('seoMetaDescription')
+  assignString('company_info', 'companyInfo')
+  assignString('add_time', 'addTime')
 
-  if ('status' in b) {
-    const s = parseOptionalInt(b.status)
-    if (s === undefined) {
+  if ('status' in b || 'toolStatus' in b) {
+    const s = normalizeToolStatus(b.toolStatus ?? b.status)
+    if (!s) {
       throw createError({ statusCode: 400, statusMessage: 'Invalid status' })
     }
-    updateData.status = s
+    updateData.toolStatus = s
   }
-  if ('is_free' in b) {
-    updateData.is_free = Boolean(b.is_free)
+  if ('is_free' in b || 'isFree' in b) {
+    updateData.isFree = Boolean(b.isFree ?? b.is_free)
   }
-  if ('is_ad' in b) {
-    updateData.is_ad = Boolean(b.is_ad)
+  if ('is_ad' in b || 'isAd' in b) {
+    updateData.isAd = Boolean(b.isAd ?? b.is_ad)
   }
-  if ('views' in b) {
-    const v = parseOptionalInt(b.views)
-    if (v !== undefined) {
-      updateData.views = v
-    }
-  }
-  if ('sort_weight' in b) {
-    const w = parseOptionalInt(b.sort_weight)
+  if ('sort_weight' in b || 'rank' in b) {
+    const w = parseOptionalInt(b.rank ?? b.sort_weight)
     if (w !== undefined) {
-      updateData.sort_weight = w
+      updateData.rank = w
     }
+  }
+  if ('seo_keywords' in b || 'seoMetaKeywords' in b) {
+    updateData.seoMetaKeywords = normalizeStringArray(b.seoMetaKeywords ?? b.seo_keywords)
   }
   if ('pros' in b && Array.isArray(b.pros)) {
     updateData.pros = b.pros
@@ -158,11 +207,7 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 404, statusMessage: 'Not found' })
     }
 
-    return {
-      ...tool,
-      month_visited_count: String(tool.month_visited_count),
-      tool_info_review: tool.tool_info_review != null ? tool.tool_info_review.toString() : null,
-    }
+    return serializeToolRow(tool)
   }
   catch (e) {
     const err = e

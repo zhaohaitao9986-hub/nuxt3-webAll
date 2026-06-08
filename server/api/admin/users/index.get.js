@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
   const kw = typeof query.keyword === 'string' ? query.keyword.trim() : ''
   const roleRaw = query.role
   const role =
-    roleRaw === 'USER' || roleRaw === 'ADMIN' || roleRaw === 'SUPERADMIN'
+    roleRaw === 'ADMIN' || roleRaw === 'SUPERADMIN'
       ? roleRaw
       : undefined
 
@@ -25,8 +25,8 @@ export default defineEventHandler(async (event) => {
   }
 
   const [total, rows] = await Promise.all([
-    prisma.user.count({ where }),
-    prisma.user.findMany({
+    prisma.adminUser.count({ where }),
+    prisma.adminUser.findMany({
       where,
       skip: (page - 1) * pageSize,
       take: pageSize,
@@ -38,6 +38,7 @@ export default defineEventHandler(async (event) => {
         role: true,
         isActive: true,
         avatar: true,
+        lastLoginAt: true,
         createdAt: true,
         updatedAt: true,
       },
