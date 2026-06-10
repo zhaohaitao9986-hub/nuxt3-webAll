@@ -267,6 +267,7 @@ export async function createContentGenerationTask(input, auth) {
         limitCount: normalizeLimit(input.limit ?? input.limitCount ?? input.limit_count),
         status: STATUS_TO_DB[status],
         sourceDataJson: normalizeJson(input.sourceDataJson ?? input.source_data_json),
+        promptVersionId: normalizeOptionalNumber(input.promptVersionId ?? input.prompt_version_id),
         promptJson: normalizeJson(input.promptJson ?? input.prompt_json),
         rawOutput: typeof input.rawOutput === 'string' ? input.rawOutput : '',
         generatedContentJson: normalizeJson(input.generatedContent ?? input.generated_content),
@@ -327,6 +328,9 @@ export async function updateContentGenerationTask(id, input, auth) {
   }
   if (input.promptJson !== undefined || input.prompt_json !== undefined) {
     data.promptJson = normalizeJson(input.promptJson ?? input.prompt_json)
+  }
+  if (input.promptVersionId !== undefined || input.prompt_version_id !== undefined) {
+    data.promptVersionId = normalizeOptionalNumber(input.promptVersionId ?? input.prompt_version_id)
   }
   if (input.rawOutput !== undefined || input.raw_output !== undefined) {
     data.rawOutput = String((input.rawOutput ?? input.raw_output) || '')
@@ -419,6 +423,10 @@ export async function saveContentGenerationTaskGenerationResult(id, input, auth)
         generatedContentJson: input.contentJson !== undefined ? normalizeJson(input.contentJson) : current.generatedContentJson,
         finalContentJson: input.contentJson !== undefined ? normalizeJson(input.contentJson) : current.finalContentJson,
         sourceDataJson: input.sourceDataJson !== undefined ? normalizeJson(input.sourceDataJson) : current.sourceDataJson,
+        promptVersionId: input.promptVersionId !== undefined
+          ? normalizeOptionalNumber(input.promptVersionId)
+          : current.promptVersionId,
+        promptJson: input.promptJson !== undefined ? normalizeJson(input.promptJson) : current.promptJson,
         rawOutput: input.rawOutput !== undefined ? String(input.rawOutput || '') : current.rawOutput,
         validationJson: input.validationJson !== undefined ? normalizeJson(input.validationJson) : current.validationJson,
         errorMessage,

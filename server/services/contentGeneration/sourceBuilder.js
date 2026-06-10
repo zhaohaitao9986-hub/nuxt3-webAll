@@ -245,7 +245,7 @@ export async function buildContentSourceData(task) {
     throw new Error('没有找到可用于生成的已发布 AI 工具数据')
   }
 
-  const type = task.contentType || 'BUYER_GUIDE'
+  const type = String(task.contentType || 'BUYER_GUIDE').trim().toUpperCase()
   if (type === 'COMPARISON' || type === 'ALTERNATIVE') {
     return buildCompareSourceData(task, category, tools, relatedCategories)
   }
@@ -253,8 +253,9 @@ export async function buildContentSourceData(task) {
 }
 
 function buildGuideSourceData(task, category, tools, relatedCategories) {
-  const contentType = ['BUYER_GUIDE', 'CATEGORY_GUIDE', 'TUTORIAL'].includes(task.contentType)
-    ? task.contentType
+  const requestedType = String(task.contentType || '').trim().toUpperCase()
+  const contentType = ['BUYER_GUIDE', 'CATEGORY_GUIDE', 'TUTORIAL'].includes(requestedType)
+    ? requestedType
     : 'BUYER_GUIDE'
   const slug = buildSlug(task, category, tools, contentType === 'TUTORIAL' ? 'tutorial' : '')
   const mappedTools = tools.map(mapTool)
@@ -285,7 +286,9 @@ function buildCompareSourceData(task, category, tools, relatedCategories) {
   const mappedTools = tools.map(mapTool)
   const primaryTool = mappedTools[0] || null
   const secondaryTool = mappedTools.find((tool) => tool.id !== primaryTool?.id) || null
-  const contentType = task.contentType === 'ALTERNATIVE' ? 'ALTERNATIVE' : 'COMPARISON'
+  const contentType = String(task.contentType || '').trim().toUpperCase() === 'ALTERNATIVE'
+    ? 'ALTERNATIVE'
+    : 'COMPARISON'
   const comparisonType = contentType === 'ALTERNATIVE'
     ? 'ALTERNATIVES'
     : (secondaryTool ? 'TOOL_VS_TOOL' : 'MULTI_TOOL')
