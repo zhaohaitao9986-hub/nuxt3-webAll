@@ -1,17 +1,12 @@
 import prisma from '~/server/utils/prisma'
+import { ALTERNATIVE_RESPONSE_SHAPE, COMPARE_RESPONSE_SHAPE } from './responseSchemas'
 
 const CONTENT_TYPES = new Set([
-  'COLLECTION',
-  'TOOL_REVIEW',
   'TUTORIAL',
   'COMPARISON',
   'ALTERNATIVE',
-  'INDUSTRY_USE_CASE',
-  'WORKFLOW_USE_CASE',
   'CATEGORY_GUIDE',
   'BUYER_GUIDE',
-  'PRICING_GUIDE',
-  'METHODOLOGY',
 ])
 
 const ROBOTS_POLICIES = new Set(['INDEX_FOLLOW', 'NOINDEX_FOLLOW', 'NOINDEX_NOFOLLOW'])
@@ -29,6 +24,12 @@ const SOURCE_TYPES = new Set([
 function normalizeEnum(value, allowed, fallback) {
   const normalized = String(value || '').trim().toUpperCase()
   return allowed.has(normalized) ? normalized : fallback
+}
+
+function requireContentType(value) {
+  const normalized = String(value || '').trim().toUpperCase()
+  if (!CONTENT_TYPES.has(normalized)) throw new Error(`unsupportedContentType: ${value || '(empty)'}`)
+  return normalized
 }
 
 function toDate(value) {
@@ -49,7 +50,7 @@ function safeDomain(url) {
 function contentPageData(task, content) {
   const meta = content.contentPage || {}
   const slug = meta.slug || task.slug
-  const type = normalizeEnum(meta.type || task.contentType, CONTENT_TYPES, 'BUYER_GUIDE')
+  const type = requireContentType(meta.type || task.contentType)
   return {
     type,
     slug,
@@ -109,7 +110,8 @@ async function replaceSources(tx, contentPageId, sources = []) {
 
 async function upsertTypedChild(tx, contentPageId, content) {
   const meta = content.contentPage || {}
-  const type = normalizeEnum(meta.type, CONTENT_TYPES, 'BUYER_GUIDE')
+  const type = requireContentType(meta.type)
+  const typedWriteStatus = { status: 'written', contentType: type, tables: [], counts: {} }
 
   if (type === 'BUYER_GUIDE' || type === 'CATEGORY_GUIDE') {
     const child = content.categoryContentPage || content.category_content_page || {}
@@ -125,6 +127,8 @@ async function upsertTypedChild(tx, contentPageId, content) {
         level2Id: child.level2Id ?? child.level2_id ?? null,
       },
     })
+    typedWriteStatus.tables.push('categoryContentPage')
+    typedWriteStatus.counts.categoryContentPage = 1
   }
 
   if (type === 'TUTORIAL' && content.tutorialPage) {
@@ -153,7 +157,97 @@ async function upsertTypedChild(tx, contentPageId, content) {
         faqJson: child.faqJson || child.faq_json || null,
       },
     })
+    typedWriteStatus.tables.push('tutorialPage')
+    typedWriteStatus.counts.tutorialPage = 1
   }
+
+  if (type === 'COMPARISON') {
+    const pageKey = COMPARE_RESPONSE_SHAPE.typedFields[0]
+    const toolsKey = COMPARE_RESPONSE_SHAPE.typedFields[1]
+    const child = content[pageKey]
+    const tools = Array.isArray(content[toolsKey]) ? content[toolsKey] : []
+    if (!child || tools.length < 2) throw new Error('COMPARISON requires comparisonPage and at least two comparisonTools')
+
+    await tx.comparisonPage.upsert({
+      where: { contentPageId },
+      create: {
+        contentPageId,
+        comparisonType: normalizeEnum(child.comparisonType, new Set(['TOOL_VS_TOOL', 'MULTI_TOOL', 'TOOL_VS_CATEGORY', 'ALTERNATIVES']), 'TOOL_VS_TOOL'),
+        primaryToolId: child.primaryToolId ?? null,
+        secondaryToolId: child.secondaryToolId ?? null,
+        categoryId: child.categoryId ?? null,
+        verdict: child.verdict || null,
+        criteriaJson: child.criteriaJson || null,
+        matrixJson: child.matrixJson || null,
+        pricingSummary: child.pricingSummary || null,
+      },
+      update: {
+        comparisonType: normalizeEnum(child.comparisonType, new Set(['TOOL_VS_TOOL', 'MULTI_TOOL', 'TOOL_VS_CATEGORY', 'ALTERNATIVES']), 'TOOL_VS_TOOL'),
+        primaryToolId: child.primaryToolId ?? null,
+        secondaryToolId: child.secondaryToolId ?? null,
+        categoryId: child.categoryId ?? null,
+        verdict: child.verdict || null,
+        criteriaJson: child.criteriaJson || null,
+        matrixJson: child.matrixJson || null,
+        pricingSummary: child.pricingSummary || null,
+      },
+    })
+    await tx.comparisonTool.deleteMany({ where: { comparisonPageId: contentPageId } })
+    await tx.comparisonTool.createMany({
+      data: tools.map((tool, index) => ({
+        comparisonPageId: contentPageId,
+        toolId: Number(tool.toolId),
+        position: Number(tool.position) || index + 1,
+        label: tool.label || null,
+        bestFor: tool.bestFor || null,
+        summary: tool.summary || null,
+      })),
+    })
+    typedWriteStatus.tables.push(pageKey, toolsKey)
+    typedWriteStatus.counts[pageKey] = 1
+    typedWriteStatus.counts[toolsKey] = tools.length
+  }
+
+  if (type === 'ALTERNATIVE') {
+    const pageKey = ALTERNATIVE_RESPONSE_SHAPE.typedFields[0]
+    const toolsKey = ALTERNATIVE_RESPONSE_SHAPE.typedFields[1]
+    const child = content[pageKey]
+    const tools = Array.isArray(content[toolsKey]) ? content[toolsKey] : []
+    if (!child?.primaryToolId || !tools.length) throw new Error('ALTERNATIVE requires alternativePage.primaryToolId and alternativeTools')
+
+    await tx.alternativePage.upsert({
+      where: { contentPageId },
+      create: {
+        contentPageId,
+        primaryToolId: Number(child.primaryToolId),
+        categoryId: child.categoryId ?? null,
+        reasonToSwitch: child.reasonToSwitch || null,
+        selectionCriteriaJson: child.selectionCriteriaJson || null,
+      },
+      update: {
+        primaryToolId: Number(child.primaryToolId),
+        categoryId: child.categoryId ?? null,
+        reasonToSwitch: child.reasonToSwitch || null,
+        selectionCriteriaJson: child.selectionCriteriaJson || null,
+      },
+    })
+    await tx.alternativeTool.deleteMany({ where: { alternativePageId: contentPageId } })
+    await tx.alternativeTool.createMany({
+      data: tools.map((tool, index) => ({
+        alternativePageId: contentPageId,
+        toolId: Number(tool.toolId),
+        position: Number(tool.position) || index + 1,
+        reason: tool.reason || null,
+        bestFor: tool.bestFor || null,
+        tradeoff: tool.tradeoff || null,
+      })),
+    })
+    typedWriteStatus.tables.push(pageKey, toolsKey)
+    typedWriteStatus.counts[pageKey] = 1
+    typedWriteStatus.counts[toolsKey] = tools.length
+  }
+
+  return typedWriteStatus
 }
 
 export async function upsertPublishedContentFromTask(task, content) {
@@ -171,9 +265,9 @@ export async function upsertPublishedContentFromTask(task, content) {
         })
       : await tx.contentPage.create({ data })
 
-    await upsertTypedChild(tx, page.id, content)
+    const typedWriteStatus = await upsertTypedChild(tx, page.id, content)
     await replaceSources(tx, page.id, content.sources || [])
 
-    return page
-  })
+    return { page, typedWriteStatus }
+  }, { maxWait: 10000, timeout: 30000 })
 }

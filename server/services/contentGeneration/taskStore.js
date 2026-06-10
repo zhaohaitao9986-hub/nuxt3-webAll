@@ -28,17 +28,11 @@ const DB_TO_STATUS = Object.fromEntries(
 )
 
 const CONTENT_TYPE_TO_DB = {
-  collection: 'COLLECTION',
-  tool_review: 'TOOL_REVIEW',
   tutorial: 'TUTORIAL',
   comparison: 'COMPARISON',
   alternative: 'ALTERNATIVE',
-  industry_use_case: 'INDUSTRY_USE_CASE',
-  workflow_use_case: 'WORKFLOW_USE_CASE',
   category_guide: 'CATEGORY_GUIDE',
   buyer_guide: 'BUYER_GUIDE',
-  pricing_guide: 'PRICING_GUIDE',
-  methodology: 'METHODOLOGY',
 }
 
 const DB_TO_CONTENT_TYPE = Object.fromEntries(
@@ -68,7 +62,11 @@ function toDbContentType(value) {
     return 'BUYER_GUIDE'
   }
   const lower = raw.toLowerCase()
-  return CONTENT_TYPE_TO_DB[lower] || raw.toUpperCase()
+  const contentType = CONTENT_TYPE_TO_DB[lower]
+  if (!contentType) {
+    throw createError({ statusCode: 400, statusMessage: `unsupportedContentType: ${raw}` })
+  }
+  return contentType
 }
 
 function fromDbContentType(value) {
@@ -267,6 +265,7 @@ export async function createContentGenerationTask(input, auth) {
         limitCount: normalizeLimit(input.limit ?? input.limitCount ?? input.limit_count),
         status: STATUS_TO_DB[status],
         sourceDataJson: normalizeJson(input.sourceDataJson ?? input.source_data_json),
+        promptVersionId: normalizeOptionalNumber(input.promptVersionId ?? input.prompt_version_id),
         promptJson: normalizeJson(input.promptJson ?? input.prompt_json),
         rawOutput: typeof input.rawOutput === 'string' ? input.rawOutput : '',
         generatedContentJson: normalizeJson(input.generatedContent ?? input.generated_content),
@@ -328,6 +327,9 @@ export async function updateContentGenerationTask(id, input, auth) {
   if (input.promptJson !== undefined || input.prompt_json !== undefined) {
     data.promptJson = normalizeJson(input.promptJson ?? input.prompt_json)
   }
+  if (input.promptVersionId !== undefined || input.prompt_version_id !== undefined) {
+    data.promptVersionId = normalizeOptionalNumber(input.promptVersionId ?? input.prompt_version_id)
+  }
   if (input.rawOutput !== undefined || input.raw_output !== undefined) {
     data.rawOutput = String((input.rawOutput ?? input.raw_output) || '')
   }
@@ -361,7 +363,7 @@ export async function updateContentGenerationTask(id, input, auth) {
       payload: { fields: Object.keys(data) },
     })
     return row
-  })
+  }, { maxWait: 10000, timeout: 30000 })
 
   return serializeTask(updated)
 }
@@ -419,6 +421,10 @@ export async function saveContentGenerationTaskGenerationResult(id, input, auth)
         generatedContentJson: input.contentJson !== undefined ? normalizeJson(input.contentJson) : current.generatedContentJson,
         finalContentJson: input.contentJson !== undefined ? normalizeJson(input.contentJson) : current.finalContentJson,
         sourceDataJson: input.sourceDataJson !== undefined ? normalizeJson(input.sourceDataJson) : current.sourceDataJson,
+        promptVersionId: input.promptVersionId !== undefined
+          ? normalizeOptionalNumber(input.promptVersionId)
+          : current.promptVersionId,
+        promptJson: input.promptJson !== undefined ? normalizeJson(input.promptJson) : current.promptJson,
         rawOutput: input.rawOutput !== undefined ? String(input.rawOutput || '') : current.rawOutput,
         validationJson: input.validationJson !== undefined ? normalizeJson(input.validationJson) : current.validationJson,
         errorMessage,
@@ -438,7 +444,7 @@ export async function saveContentGenerationTaskGenerationResult(id, input, auth)
       },
     })
     return row
-  })
+  }, { maxWait: 10000, timeout: 30000 })
 
   return serializeTask(updated)
 }
@@ -509,7 +515,7 @@ export async function rejectContentGenerationTask(id, reason, auth) {
   return serializeTask(updated)
 }
 
-export async function markContentGenerationTaskPublished(id, publishedContent, auth, contentPageId = null) {
+export async function markContentGenerationTaskPublished(id, publishedContent, auth, contentPageId = null, typedWriteStatus = null) {
   const current = await prisma.contentGenerationTask.findUnique({ where: { id: Number(id) } })
   if (!current) {
     throw createError({ statusCode: 404, statusMessage: '任务不存在' })
@@ -521,6 +527,10 @@ export async function markContentGenerationTaskPublished(id, publishedContent, a
       data: {
         status: 'PUBLISHED',
         finalContentJson: normalizeJson(publishedContent),
+        validationJson: normalizeJson({
+          ...(current.validationJson && typeof current.validationJson === 'object' ? current.validationJson : {}),
+          typedWriteStatus,
+        }),
         contentPageId: contentPageId || current.contentPageId,
         publishedByAdminId: actorId(auth),
         publishedAt: new Date(),
@@ -533,10 +543,10 @@ export async function markContentGenerationTaskPublished(id, publishedContent, a
       fromStatus: DB_TO_STATUS[current.status],
       toStatus: 'published',
       message: 'Task published',
-      payload: { contentPageId: row.contentPageId },
+      payload: { contentPageId: row.contentPageId, typedWriteStatus },
     })
     return row
-  })
+  }, { maxWait: 10000, timeout: 30000 })
 
   return serializeTask(updated)
 }
