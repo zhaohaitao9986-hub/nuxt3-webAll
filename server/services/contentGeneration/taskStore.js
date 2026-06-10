@@ -89,7 +89,7 @@ function normalizeOptionalNumber(value) {
 }
 
 function normalizeLimit(value) {
-  return Math.min(30, Math.max(1, Number(value) || 10))
+  return Math.min(30, Math.max(1, Number(value) || 5))
 }
 
 function actorId(auth) {

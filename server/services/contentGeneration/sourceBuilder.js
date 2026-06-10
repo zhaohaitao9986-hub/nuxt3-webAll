@@ -225,8 +225,8 @@ function toolInclude() {
   }
 }
 
-async function fetchTools({ categoryId = null, toolId = null, limit = 10, excludeIds = [] } = {}) {
-  const safeLimit = Math.min(30, Math.max(1, Number(limit) || 10))
+async function fetchTools({ categoryId = null, toolId = null, limit = 5, excludeIds = [] } = {}) {
+  const safeLimit = Math.min(30, Math.max(1, Number(limit) || 5))
   const where = {
     toolStatus: { in: ['ONLINE', 'ACTIVE'] },
     handle: { not: '' },
@@ -253,7 +253,7 @@ function requestedToolIds(task) {
 
 async function fetchCompareTools(task) {
   const { primaryToolId, secondaryToolId } = requestedToolIds(task)
-  const limit = Math.min(30, Math.max(2, Number(task.limit) || 10))
+  const limit = Math.min(30, Math.max(2, Number(task.limit) || 5))
 
   let primaryTool = null
   let secondaryTool = null

@@ -1,23 +1,19 @@
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  CONTENT_GENERATION_STATUS_OPTIONS,
+  contentGenerationStatusLabel,
+  contentGenerationStatusType,
+} from '~/utils/contentGeneration'
 
 definePageMeta({
   layout: 'admin',
 })
 
+const router = useRouter()
 const adminAxios = useAdminAxios()
 
-const statusOptions = [
-  { label: '草稿', value: 'draft', type: 'info' },
-  { label: '待生成', value: 'pending', type: 'warning' },
-  { label: '生成中', value: 'generating', type: 'primary' },
-  { label: '失败', value: 'failed', type: 'danger' },
-  { label: '待审核', value: 'review', type: 'warning' },
-  { label: '已通过', value: 'approved', type: 'success' },
-  { label: '已驳回', value: 'rejected', type: 'danger' },
-  { label: '已发布', value: 'published', type: 'success' },
-]
-
+const statusOptions = CONTENT_GENERATION_STATUS_OPTIONS
 const statusMap = computed(() => Object.fromEntries(statusOptions.map((item) => [item.value, item])))
 
 const filters = reactive({
@@ -31,8 +27,6 @@ const page = ref(1)
 const pageSize = ref(20)
 const loading = ref(false)
 const statusLoading = reactive({})
-const generationLoading = reactive({})
-const reviewLoading = reactive({})
 const selectedRows = ref([])
 const batchLoading = ref(false)
 const categoryOptions = ref([])
@@ -48,53 +42,20 @@ const createForm = reactive({
   targetType: 'guide',
   categoryId: '',
   toolId: '',
-  limit: 10,
+  limit: 5,
   status: 'draft',
-})
-
-const detailVisible = ref(false)
-const detailLoading = ref(false)
-const detailSaving = ref(false)
-const editingId = ref(null)
-const detailFormRef = ref(null)
-const detailForm = reactive({
-  title: '',
-  slug: '',
-  contentType: '',
-  targetType: '',
-  categoryId: '',
-  toolId: '',
-  limit: 10,
-  status: 'draft',
-  generatedContentText: '',
-  contentJsonText: '',
-  sourceDataJsonText: '',
-  rawOutput: '',
-  validationJsonText: '',
-  errorMessage: '',
-  rejectReason: '',
-})
-
-const rejectVisible = ref(false)
-const rejectSaving = ref(false)
-const rejectForm = reactive({
-  reason: '',
 })
 
 const createRules = {
   title: [{ required: true, message: '请输入任务标题', trigger: 'blur' }],
 }
 
-const detailRules = {
-  title: [{ required: true, message: '请输入任务标题', trigger: 'blur' }],
-}
-
 function statusLabel(status) {
-  return statusMap.value[status]?.label || status || '未知'
+  return contentGenerationStatusLabel(status, statusMap.value)
 }
 
 function statusType(status) {
-  return statusMap.value[status]?.type || 'info'
+  return contentGenerationStatusType(status, statusMap.value)
 }
 
 function formatDt(iso) {
@@ -103,29 +64,6 @@ function formatDt(iso) {
   }
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString('zh-CN')
-}
-
-function stringifyJson(value) {
-  if (value === null || value === undefined || value === '') {
-    return ''
-  }
-  if (typeof value === 'string') {
-    return value
-  }
-  return JSON.stringify(value, null, 2)
-}
-
-function parseJsonText(text, label) {
-  const trimmed = String(text || '').trim()
-  if (!trimmed) {
-    return null
-  }
-  try {
-    return JSON.parse(trimmed)
-  }
-  catch {
-    throw new Error(`${label} 不是有效 JSON`)
-  }
 }
 
 function errorMessage(error, fallback) {
@@ -208,6 +146,10 @@ function onSelectionChange(rows) {
   selectedRows.value = rows
 }
 
+function openDetail(row) {
+  router.push(`/admin/content-generation/${row.id}`)
+}
+
 async function batchGenerateTasks() {
   const ids = selectedRows.value.map((row) => row.id).filter(Boolean)
   if (!ids.length) {
@@ -255,7 +197,7 @@ function openCreate() {
   createForm.targetType = 'guide'
   createForm.categoryId = ''
   createForm.toolId = ''
-  createForm.limit = 10
+  createForm.limit = 5
   createForm.status = 'draft'
   createVisible.value = true
   nextTick(() => createFormRef.value?.clearValidate?.())
@@ -296,243 +238,6 @@ async function submitCreate() {
   }
 }
 
-function fillDetailForm(row) {
-  editingId.value = row.id
-  detailForm.title = row.title || ''
-  detailForm.slug = row.slug || ''
-  detailForm.contentType = row.contentType || ''
-  detailForm.targetType = row.targetType || ''
-  detailForm.categoryId = row.categoryId ?? ''
-  detailForm.toolId = row.toolId ?? ''
-  detailForm.limit = row.limit ?? 10
-  detailForm.status = row.status || 'draft'
-  detailForm.generatedContentText = stringifyJson(row.generatedContent || row.generated_content || row.contentJson)
-  detailForm.contentJsonText = stringifyJson(row.finalContent || row.final_content || row.contentJson)
-  detailForm.sourceDataJsonText = stringifyJson(row.sourceDataJson)
-  detailForm.rawOutput = row.rawOutput || ''
-  detailForm.validationJsonText = stringifyJson(row.validationJson)
-  detailForm.errorMessage = row.errorMessage || row.error_message || ''
-  detailForm.rejectReason = row.rejectReason || row.reject_reason || ''
-}
-
-async function openDetail(row) {
-  detailVisible.value = true
-  detailLoading.value = true
-  try {
-    const res = await adminAxios.get(`/api/admin/content-generation/tasks/${row.id}`)
-    fillDetailForm(res.data)
-  }
-  catch (e) {
-    if (e?.response?.status === 401) {
-      return
-    }
-    ElMessage.error(errorMessage(e, '加载详情失败'))
-    detailVisible.value = false
-  }
-  finally {
-    detailLoading.value = false
-  }
-}
-
-async function saveDetail() {
-  try {
-    await detailFormRef.value?.validate?.()
-  }
-  catch {
-    return false
-  }
-
-  let payload
-  try {
-    payload = {
-      title: detailForm.title.trim(),
-      slug: detailForm.slug.trim(),
-      contentType: detailForm.contentType.trim(),
-      targetType: detailForm.targetType.trim(),
-      categoryId: detailForm.categoryId || null,
-      toolId: detailForm.toolId || null,
-      limit: detailForm.limit,
-      contentJson: parseJsonText(detailForm.contentJsonText, '内容 JSON'),
-      finalContent: parseJsonText(detailForm.contentJsonText, '最终内容 JSON'),
-      sourceDataJson: parseJsonText(detailForm.sourceDataJsonText, '来源 JSON'),
-      rawOutput: detailForm.rawOutput,
-      validationJson: parseJsonText(detailForm.validationJsonText, '校验 JSON'),
-      errorMessage: detailForm.errorMessage,
-    }
-  }
-  catch (e) {
-    ElMessage.error(e.message)
-    return false
-  }
-
-  detailSaving.value = true
-  try {
-    const res = await adminAxios.put(`/api/admin/content-generation/tasks/${editingId.value}`, payload)
-    fillDetailForm(res.data)
-    ElMessage.success('已保存')
-    await loadList()
-    return true
-  }
-  catch (e) {
-    if (e?.response?.status === 401) {
-      return
-    }
-    ElMessage.error(errorMessage(e, '保存失败'))
-    return false
-  }
-  finally {
-    detailSaving.value = false
-  }
-}
-
-async function approveTask() {
-  const id = editingId.value
-  if (!id) {
-    return
-  }
-  reviewLoading[id] = true
-  try {
-    const saved = await saveDetail()
-    if (!saved) {
-      return
-    }
-    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${id}/approve`)
-    fillDetailForm(res.data)
-    ElMessage.success('审核已通过')
-    await loadList()
-  }
-  catch (e) {
-    if (e?.response?.status === 401) {
-      return
-    }
-    ElMessage.error(errorMessage(e, '审核通过失败'))
-  }
-  finally {
-    reviewLoading[id] = false
-  }
-}
-
-function openReject() {
-  rejectForm.reason = detailForm.rejectReason || ''
-  rejectVisible.value = true
-}
-
-async function submitReject() {
-  const id = editingId.value
-  if (!id) {
-    return
-  }
-  const reason = rejectForm.reason.trim()
-  if (!reason) {
-    ElMessage.warning('请填写驳回原因')
-    return
-  }
-
-  rejectSaving.value = true
-  try {
-    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${id}/reject`, {
-      rejectReason: reason,
-    })
-    fillDetailForm(res.data)
-    rejectVisible.value = false
-    ElMessage.success('已驳回')
-    await loadList()
-  }
-  catch (e) {
-    if (e?.response?.status === 401) {
-      return
-    }
-    ElMessage.error(errorMessage(e, '驳回失败'))
-  }
-  finally {
-    rejectSaving.value = false
-  }
-}
-
-async function publishTask() {
-  const id = editingId.value
-  if (!id) {
-    return
-  }
-  try {
-    await ElMessageBox.confirm('发布会写入正式内容发布存储，确定发布吗？', '发布确认', {
-      type: 'warning',
-      confirmButtonText: '发布',
-      cancelButtonText: '取消',
-    })
-  }
-  catch {
-    return
-  }
-
-  reviewLoading[id] = true
-  try {
-    const saved = await saveDetail()
-    if (!saved) {
-      return
-    }
-    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${id}/publish`)
-    fillDetailForm(res.data)
-    ElMessage.success('发布成功')
-    await loadList()
-  }
-  catch (e) {
-    if (e?.response?.status === 401) {
-      return
-    }
-    ElMessage.error(errorMessage(e, '发布失败'))
-  }
-  finally {
-    reviewLoading[id] = false
-  }
-}
-
-async function generateTask(mode) {
-  if (!editingId.value) {
-    return
-  }
-  const id = editingId.value
-  const endpoint = mode === 'regenerate' ? 'regenerate' : 'generate'
-
-  if (mode === 'regenerate') {
-    try {
-      await ElMessageBox.confirm('重新生成会覆盖当前生成内容，确定继续吗？', '重新生成确认', {
-        type: 'warning',
-        confirmButtonText: '重新生成',
-        cancelButtonText: '取消',
-      })
-    }
-    catch {
-      return
-    }
-  }
-
-  generationLoading[id] = true
-  try {
-    const saved = await saveDetail()
-    if (!saved) {
-      return
-    }
-    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${id}/${endpoint}`)
-    fillDetailForm(res.data)
-    ElMessage.success(mode === 'regenerate' ? '已重新生成，进入待审核' : '已生成，进入待审核')
-    await loadList()
-  }
-  catch (e) {
-    if (e?.response?.status === 401) {
-      return
-    }
-    const message = errorMessage(e, mode === 'regenerate' ? '重新生成失败' : '生成失败')
-    ElMessage.error(message)
-    detailForm.status = 'failed'
-    detailForm.errorMessage = message
-    await loadList()
-  }
-  finally {
-    generationLoading[id] = false
-  }
-}
-
 async function changeStatus(row, status) {
   if (row.status === status) {
     return
@@ -555,9 +260,6 @@ async function changeStatus(row, status) {
     const res = await adminAxios.patch(`/api/admin/content-generation/tasks/${row.id}/status`, { status })
     row.status = res.data.status
     row.updatedAt = res.data.updatedAt
-    if (editingId.value === row.id) {
-      detailForm.status = res.data.status
-    }
     ElMessage.success('状态已更新')
   }
   catch (e) {
@@ -776,200 +478,6 @@ onMounted(() => {
         </el-button>
       </template>
     </el-dialog>
-
-    <el-drawer
-      v-model="detailVisible"
-      title="任务详情"
-      size="720px"
-      destroy-on-close
-    >
-      <div v-loading="detailLoading" class="detail-drawer-body">
-        <el-form ref="detailFormRef" :model="detailForm" :rules="detailRules" label-width="96px">
-          <el-form-item label="任务标题" prop="title">
-            <el-input v-model="detailForm.title" />
-          </el-form-item>
-          <el-form-item label="Slug">
-            <el-input v-model="detailForm.slug" />
-          </el-form-item>
-          <el-form-item label="内容类型">
-            <el-input v-model="detailForm.contentType" />
-          </el-form-item>
-          <el-form-item label="目标类型">
-            <el-input v-model="detailForm.targetType" />
-          </el-form-item>
-          <el-form-item label="分类">
-            <el-select
-              v-model="detailForm.categoryId"
-              clearable
-              filterable
-              placeholder="可选，用于按分类读取工具"
-              style="width: 100%"
-            >
-              <el-option
-                v-for="opt in categoryOptions"
-                :key="opt.id"
-                :label="opt.label || opt.name"
-                :value="opt.id"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="工具">
-            <el-select
-              v-model="detailForm.toolId"
-              clearable
-              filterable
-              placeholder="可选，指定主工具"
-              style="width: 100%"
-            >
-              <el-option
-                v-for="tool in toolOptions"
-                :key="tool.id"
-                :label="tool.name"
-                :value="tool.id"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="数量">
-            <el-input-number v-model="detailForm.limit" :min="1" :max="30" style="width: 160px" />
-          </el-form-item>
-          <el-form-item label="当前状态">
-            <el-tag :type="statusType(detailForm.status)">
-              {{ statusLabel(detailForm.status) }}
-            </el-tag>
-          </el-form-item>
-          <el-form-item label="AI 原始">
-            <el-input
-              v-model="detailForm.generatedContentText"
-              type="textarea"
-              :rows="6"
-              resize="vertical"
-              readonly
-            />
-          </el-form-item>
-          <el-form-item label="最终内容">
-            <el-input
-              v-model="detailForm.contentJsonText"
-              type="textarea"
-              :rows="8"
-              resize="vertical"
-            />
-          </el-form-item>
-          <el-form-item label="来源 JSON">
-            <el-input
-              v-model="detailForm.sourceDataJsonText"
-              type="textarea"
-              :rows="6"
-              resize="vertical"
-            />
-          </el-form-item>
-          <el-form-item label="原始输出">
-            <el-input
-              v-model="detailForm.rawOutput"
-              type="textarea"
-              :rows="5"
-              resize="vertical"
-            />
-          </el-form-item>
-          <el-form-item label="校验 JSON">
-            <el-input
-              v-model="detailForm.validationJsonText"
-              type="textarea"
-              :rows="5"
-              resize="vertical"
-            />
-          </el-form-item>
-          <el-form-item label="错误信息">
-            <el-input
-              v-model="detailForm.errorMessage"
-              type="textarea"
-              :rows="3"
-              resize="vertical"
-            />
-          </el-form-item>
-          <el-form-item label="驳回原因">
-            <el-input
-              v-model="detailForm.rejectReason"
-              type="textarea"
-              :rows="3"
-              resize="vertical"
-              readonly
-            />
-          </el-form-item>
-        </el-form>
-      </div>
-      <template #footer>
-        <el-button
-          type="success"
-          :loading="!!generationLoading[editingId]"
-          @click="generateTask('generate')"
-        >
-          生成内容
-        </el-button>
-        <el-button
-          type="warning"
-          :loading="!!generationLoading[editingId]"
-          @click="generateTask('regenerate')"
-        >
-          重新生成
-        </el-button>
-        <el-button
-          v-if="detailForm.status === 'review'"
-          type="primary"
-          :loading="!!reviewLoading[editingId]"
-          @click="approveTask"
-        >
-          审核通过
-        </el-button>
-        <el-button
-          v-if="detailForm.status === 'review'"
-          type="danger"
-          :loading="rejectSaving"
-          @click="openReject"
-        >
-          驳回
-        </el-button>
-        <el-button
-          v-if="detailForm.status === 'approved'"
-          type="success"
-          :loading="!!reviewLoading[editingId]"
-          @click="publishTask"
-        >
-          发布
-        </el-button>
-        <el-button @click="detailVisible = false">
-          关闭
-        </el-button>
-        <el-button type="primary" :loading="detailSaving" @click="saveDetail">
-          保存
-        </el-button>
-      </template>
-    </el-drawer>
-
-    <el-dialog
-      v-model="rejectVisible"
-      title="驳回内容"
-      width="520px"
-      destroy-on-close
-    >
-      <el-form label-width="86px">
-        <el-form-item label="驳回原因">
-          <el-input
-            v-model="rejectForm.reason"
-            type="textarea"
-            :rows="5"
-            placeholder="请输入需要修改的原因"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="rejectVisible = false">
-          取消
-        </el-button>
-        <el-button type="danger" :loading="rejectSaving" @click="submitReject">
-          驳回
-        </el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -1002,10 +510,5 @@ onMounted(() => {
   margin-top: 16px;
   display: flex;
   justify-content: flex-end;
-}
-
-.detail-drawer-body {
-  min-height: 320px;
-  padding-right: 4px;
 }
 </style>

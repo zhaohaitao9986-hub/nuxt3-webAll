@@ -1,0 +1,656 @@
+<script setup>
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  CONTENT_GENERATION_PHASE_LABELS,
+  CONTENT_GENERATION_STATUS_OPTIONS,
+  contentGenerationStatusLabel,
+  contentGenerationStatusType,
+  fillContentGenerationDetailForm,
+  parseContentJsonText,
+} from '~/utils/contentGeneration'
+
+definePageMeta({
+  layout: 'admin',
+})
+
+const route = useRoute()
+const router = useRouter()
+const adminAxios = useAdminAxios()
+const { streamGenerate } = useContentGenerationStream()
+
+const taskId = computed(() => {
+  const raw = route.params.id
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : null
+})
+
+const statusMap = computed(() => Object.fromEntries(
+  CONTENT_GENERATION_STATUS_OPTIONS.map((item) => [item.value, item]),
+))
+
+const pageLoading = ref(false)
+const detailSaving = ref(false)
+const generationLoading = ref(false)
+const reviewLoading = ref(false)
+const rejectSaving = ref(false)
+const generationPhase = ref('')
+
+const categoryOptions = ref([])
+const toolOptions = ref([])
+const detailFormRef = ref(null)
+
+const detailForm = reactive({
+  title: '',
+  slug: '',
+  contentType: '',
+  targetType: '',
+  categoryId: '',
+  toolId: '',
+  limit: 5,
+  status: 'draft',
+  generatedContentText: '',
+  contentJsonText: '',
+  sourceDataJsonText: '',
+  rawOutput: '',
+  validationJsonText: '',
+  errorMessage: '',
+  rejectReason: '',
+})
+
+const rejectVisible = ref(false)
+const rejectForm = reactive({ reason: '' })
+
+const detailRules = {
+  title: [{ required: true, message: '请输入任务标题', trigger: 'blur' }],
+}
+
+const phaseLabel = computed(() => CONTENT_GENERATION_PHASE_LABELS[generationPhase.value] || '')
+
+function statusLabel(status) {
+  return contentGenerationStatusLabel(status, statusMap.value)
+}
+
+function statusType(status) {
+  return contentGenerationStatusType(status, statusMap.value)
+}
+
+function errorMessage(error, fallback) {
+  return error?.response?.data?.statusMessage
+    || error?.response?.data?.message
+    || error?.message
+    || fallback
+}
+
+async function loadOptions() {
+  try {
+    const [categoriesRes, toolsRes] = await Promise.all([
+      adminAxios.get('/api/admin/categories/options'),
+      adminAxios.get('/api/admin/tools', { params: { page: 1, pageSize: 100, toolStatus: 'ACTIVE' } }),
+    ])
+    categoryOptions.value = categoriesRes.data?.data || []
+    toolOptions.value = toolsRes.data?.data || []
+  }
+  catch {
+    categoryOptions.value = []
+    toolOptions.value = []
+  }
+}
+
+async function loadDetail() {
+  if (!taskId.value) {
+    return
+  }
+  pageLoading.value = true
+  try {
+    const res = await adminAxios.get(`/api/admin/content-generation/tasks/${taskId.value}`)
+    fillContentGenerationDetailForm(detailForm, res.data)
+  }
+  catch (e) {
+    if (e?.response?.status === 401) {
+      return
+    }
+    ElMessage.error(errorMessage(e, '加载详情失败'))
+    router.push('/admin/content-generation')
+  }
+  finally {
+    pageLoading.value = false
+  }
+}
+
+async function saveDetail() {
+  try {
+    await detailFormRef.value?.validate?.()
+  }
+  catch {
+    return false
+  }
+
+  let payload
+  try {
+    payload = {
+      title: detailForm.title.trim(),
+      slug: detailForm.slug.trim(),
+      contentType: detailForm.contentType.trim(),
+      targetType: detailForm.targetType.trim(),
+      categoryId: detailForm.categoryId || null,
+      toolId: detailForm.toolId || null,
+      limit: detailForm.limit,
+      contentJson: parseContentJsonText(detailForm.contentJsonText, '内容 JSON'),
+      finalContent: parseContentJsonText(detailForm.contentJsonText, '最终内容 JSON'),
+      sourceDataJson: parseContentJsonText(detailForm.sourceDataJsonText, '来源 JSON'),
+      rawOutput: detailForm.rawOutput,
+      validationJson: parseContentJsonText(detailForm.validationJsonText, '校验 JSON'),
+      errorMessage: detailForm.errorMessage,
+    }
+  }
+  catch (e) {
+    ElMessage.error(e.message)
+    return false
+  }
+
+  detailSaving.value = true
+  try {
+    const res = await adminAxios.put(`/api/admin/content-generation/tasks/${taskId.value}`, payload)
+    fillContentGenerationDetailForm(detailForm, res.data)
+    ElMessage.success('已保存')
+    return true
+  }
+  catch (e) {
+    if (e?.response?.status === 401) {
+      return
+    }
+    ElMessage.error(errorMessage(e, '保存失败'))
+    return false
+  }
+  finally {
+    detailSaving.value = false
+  }
+}
+
+async function generateTask(mode) {
+  if (!taskId.value || generationLoading.value) {
+    return
+  }
+
+  if (mode === 'regenerate') {
+    try {
+      await ElMessageBox.confirm('重新生成会覆盖当前生成内容，确定继续吗？', '重新生成确认', {
+        type: 'warning',
+        confirmButtonText: '重新生成',
+        cancelButtonText: '取消',
+      })
+    }
+    catch {
+      return
+    }
+  }
+
+  const saved = await saveDetail()
+  if (!saved) {
+    return
+  }
+
+  generationLoading.value = true
+  generationPhase.value = 'building_source'
+  detailForm.status = 'generating'
+  detailForm.rawOutput = ''
+  detailForm.errorMessage = ''
+
+  try {
+    await streamGenerate(taskId.value, mode, {
+      onStatus: (payload) => {
+        if (payload.status) {
+          detailForm.status = payload.status
+        }
+      },
+      onSource: (payload) => {
+        if (payload.sourceDataJson) {
+          detailForm.sourceDataJsonText = JSON.stringify(payload.sourceDataJson, null, 2)
+        }
+      },
+      onPhase: (payload) => {
+        if (payload.phase) {
+          generationPhase.value = payload.phase
+        }
+        if (payload.clearOutput) {
+          detailForm.rawOutput = ''
+        }
+      },
+      onChunk: (text) => {
+        detailForm.rawOutput += text
+      },
+      onComplete: (payload) => {
+        if (payload.task) {
+          fillContentGenerationDetailForm(detailForm, payload.task)
+        }
+        if (payload.success !== false) {
+          ElMessage.success('已生成，进入待审核')
+        }
+      },
+      onError: (payload) => {
+        if (payload.task) {
+          fillContentGenerationDetailForm(detailForm, payload.task)
+        }
+        else {
+          detailForm.status = 'failed'
+          detailForm.errorMessage = payload.message || '生成失败'
+        }
+        ElMessage.error(payload.message || '生成失败')
+      },
+    })
+  }
+  catch (e) {
+    ElMessage.error(e?.message || (mode === 'regenerate' ? '重新生成失败' : '生成失败'))
+    await loadDetail()
+  }
+  finally {
+    generationLoading.value = false
+    generationPhase.value = ''
+  }
+}
+
+async function approveTask() {
+  reviewLoading.value = true
+  try {
+    const saved = await saveDetail()
+    if (!saved) {
+      return
+    }
+    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${taskId.value}/approve`)
+    fillContentGenerationDetailForm(detailForm, res.data)
+    ElMessage.success('审核已通过')
+  }
+  catch (e) {
+    if (e?.response?.status === 401) {
+      return
+    }
+    ElMessage.error(errorMessage(e, '审核通过失败'))
+  }
+  finally {
+    reviewLoading.value = false
+  }
+}
+
+function openReject() {
+  rejectForm.reason = detailForm.rejectReason || ''
+  rejectVisible.value = true
+}
+
+async function submitReject() {
+  const reason = rejectForm.reason.trim()
+  if (!reason) {
+    ElMessage.warning('请填写驳回原因')
+    return
+  }
+
+  rejectSaving.value = true
+  try {
+    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${taskId.value}/reject`, {
+      rejectReason: reason,
+    })
+    fillContentGenerationDetailForm(detailForm, res.data)
+    rejectVisible.value = false
+    ElMessage.success('已驳回')
+  }
+  catch (e) {
+    if (e?.response?.status === 401) {
+      return
+    }
+    ElMessage.error(errorMessage(e, '驳回失败'))
+  }
+  finally {
+    rejectSaving.value = false
+  }
+}
+
+async function publishTask() {
+  try {
+    await ElMessageBox.confirm('发布会写入正式内容发布存储，确定发布吗？', '发布确认', {
+      type: 'warning',
+      confirmButtonText: '发布',
+      cancelButtonText: '取消',
+    })
+  }
+  catch {
+    return
+  }
+
+  reviewLoading.value = true
+  try {
+    const saved = await saveDetail()
+    if (!saved) {
+      return
+    }
+    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${taskId.value}/publish`)
+    fillContentGenerationDetailForm(detailForm, res.data)
+    ElMessage.success('发布成功')
+  }
+  catch (e) {
+    if (e?.response?.status === 401) {
+      return
+    }
+    ElMessage.error(errorMessage(e, '发布失败'))
+  }
+  finally {
+    reviewLoading.value = false
+  }
+}
+
+function goBack() {
+  router.push('/admin/content-generation')
+}
+
+onMounted(() => {
+  loadOptions()
+  loadDetail()
+})
+
+watch(taskId, () => {
+  loadDetail()
+})
+</script>
+
+<template>
+  <div v-loading="pageLoading" class="content-generation-detail-page">
+    <div class="detail-top-bar">
+      <div class="detail-page-header">
+        <el-button @click="goBack">
+          返回列表
+        </el-button>
+        <div class="detail-page-header-meta">
+          <span class="detail-page-title">任务详情</span>
+          <span v-if="taskId" class="detail-page-id">#{{ taskId }}</span>
+          <el-tag v-if="detailForm.status" :type="statusType(detailForm.status)" effect="light">
+            {{ statusLabel(detailForm.status) }}
+          </el-tag>
+          <span v-if="generationLoading && phaseLabel" class="detail-phase-label">
+            {{ phaseLabel }}
+          </span>
+        </div>
+      </div>
+
+      <div class="detail-action-bar">
+        <el-button
+          type="success"
+          :loading="generationLoading"
+          :disabled="detailSaving"
+          @click="generateTask('generate')"
+        >
+          生成内容
+        </el-button>
+        <el-button
+          type="warning"
+          :loading="generationLoading"
+          :disabled="detailSaving"
+          @click="generateTask('regenerate')"
+        >
+          重新生成
+        </el-button>
+        <el-button
+          v-if="detailForm.status === 'review'"
+          type="primary"
+          :loading="reviewLoading"
+          :disabled="generationLoading"
+          @click="approveTask"
+        >
+          审核通过
+        </el-button>
+        <el-button
+          v-if="detailForm.status === 'review'"
+          type="danger"
+          :loading="rejectSaving"
+          :disabled="generationLoading"
+          @click="openReject"
+        >
+          驳回
+        </el-button>
+        <el-button
+          v-if="detailForm.status === 'approved'"
+          type="success"
+          :loading="reviewLoading"
+          :disabled="generationLoading"
+          @click="publishTask"
+        >
+          发布
+        </el-button>
+        <el-button :disabled="generationLoading" @click="goBack">
+          返回
+        </el-button>
+        <el-button
+          type="primary"
+          :loading="detailSaving"
+          :disabled="generationLoading"
+          @click="saveDetail"
+        >
+          保存
+        </el-button>
+      </div>
+    </div>
+
+    <el-card shadow="never" class="detail-card">
+      <el-form ref="detailFormRef" :model="detailForm" :rules="detailRules" label-width="96px">
+        <el-form-item label="任务标题" prop="title">
+          <el-input v-model="detailForm.title" :disabled="generationLoading" />
+        </el-form-item>
+        <el-form-item label="Slug">
+          <el-input v-model="detailForm.slug" :disabled="generationLoading" />
+        </el-form-item>
+        <el-form-item label="内容类型">
+          <el-input v-model="detailForm.contentType" :disabled="generationLoading" />
+        </el-form-item>
+        <el-form-item label="目标类型">
+          <el-input v-model="detailForm.targetType" :disabled="generationLoading" />
+        </el-form-item>
+        <el-form-item label="分类">
+          <el-select
+            v-model="detailForm.categoryId"
+            clearable
+            filterable
+            placeholder="可选，用于按分类读取工具"
+            style="width: 100%"
+            :disabled="generationLoading"
+          >
+            <el-option
+              v-for="opt in categoryOptions"
+              :key="opt.id"
+              :label="opt.label || opt.name"
+              :value="opt.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="工具">
+          <el-select
+            v-model="detailForm.toolId"
+            clearable
+            filterable
+            placeholder="可选，指定主工具"
+            style="width: 100%"
+            :disabled="generationLoading"
+          >
+            <el-option
+              v-for="tool in toolOptions"
+              :key="tool.id"
+              :label="tool.name"
+              :value="tool.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="数量">
+          <el-input-number
+            v-model="detailForm.limit"
+            :min="1"
+            :max="30"
+            style="width: 160px"
+            :disabled="generationLoading"
+          />
+        </el-form-item>
+
+        <el-form-item label="来源 JSON">
+          <el-input
+            v-model="detailForm.sourceDataJsonText"
+            type="textarea"
+            class="detail-textarea-fixed"
+            :disabled="generationLoading"
+          />
+        </el-form-item>
+
+        <el-form-item label="原始输出">
+          <el-input
+            v-model="detailForm.rawOutput"
+            type="textarea"
+            class="detail-textarea-fixed detail-textarea-stream"
+            :readonly="generationLoading"
+          />
+        </el-form-item>
+
+        <el-form-item label="AI 原始">
+          <el-input
+            v-model="detailForm.generatedContentText"
+            type="textarea"
+            class="detail-textarea-fixed"
+            readonly
+          />
+        </el-form-item>
+
+        <el-form-item label="最终内容">
+          <el-input
+            v-model="detailForm.contentJsonText"
+            type="textarea"
+            class="detail-textarea-fixed"
+            :disabled="generationLoading"
+          />
+        </el-form-item>
+
+        <el-form-item label="校验 JSON">
+          <el-input
+            v-model="detailForm.validationJsonText"
+            type="textarea"
+            class="detail-textarea-fixed"
+            :disabled="generationLoading"
+          />
+        </el-form-item>
+
+        <el-form-item label="错误信息">
+          <el-input
+            v-model="detailForm.errorMessage"
+            type="textarea"
+            class="detail-textarea-fixed"
+            :disabled="generationLoading"
+          />
+        </el-form-item>
+
+        <el-form-item v-if="detailForm.rejectReason" label="驳回原因">
+          <el-input
+            v-model="detailForm.rejectReason"
+            type="textarea"
+            class="detail-textarea-fixed"
+            readonly
+          />
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-dialog
+      v-model="rejectVisible"
+      title="驳回内容"
+      width="520px"
+      destroy-on-close
+    >
+      <el-form label-width="86px">
+        <el-form-item label="驳回原因">
+          <el-input
+            v-model="rejectForm.reason"
+            type="textarea"
+            :rows="5"
+            placeholder="请输入需要修改的原因"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rejectVisible = false">
+          取消
+        </el-button>
+        <el-button type="danger" :loading="rejectSaving" @click="submitReject">
+          驳回
+        </el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<style scoped>
+.content-generation-detail-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.detail-top-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.detail-page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.detail-page-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.detail-page-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.detail-page-id {
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.detail-phase-label {
+  font-size: 13px;
+  color: #409eff;
+}
+
+.detail-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.detail-card :deep(.el-card__body) {
+  padding-top: 20px;
+}
+
+.detail-textarea-fixed :deep(.el-textarea__inner) {
+  height: 1000px !important;
+  min-height: 1000px;
+  max-height: 1000px;
+  overflow-y: auto !important;
+  resize: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.detail-textarea-stream :deep(.el-textarea__inner) {
+  background-color: #f9fafb;
+}
+</style>

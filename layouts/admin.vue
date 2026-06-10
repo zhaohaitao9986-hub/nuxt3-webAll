@@ -28,6 +28,9 @@ const currentTitle = computed(() => {
   if (titleMap[full]) {
     return titleMap[full]
   }
+  if (/^\/admin\/content-generation\/\d+$/.test(full)) {
+    return '内容生成详情'
+  }
   if (full.startsWith('/admin/tools')) {
     return 'AI 工具管理'
   }

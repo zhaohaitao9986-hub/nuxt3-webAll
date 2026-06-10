@@ -1,5 +1,5 @@
 import { createError } from 'h3'
-import { callContentGenerationAi } from './aiClient'
+import { callContentGenerationAi, callContentGenerationAiStream } from './aiClient'
 import {
   getContentGenerationTask,
   saveContentGenerationTaskGenerationResult,
@@ -96,11 +96,22 @@ function buildValidationPayload(validation, metadata) {
   }
 }
 
-export async function generateContentForTask(taskId, event, auth) {
+function createEmit(streamHandlers) {
+  if (!streamHandlers?.emit) {
+    return async () => {}
+  }
+  return streamHandlers.emit
+}
+
+export async function generateContentForTask(taskId, event, auth, streamHandlers = null) {
+  const emit = createEmit(streamHandlers)
+  const streaming = Boolean(streamHandlers?.emit)
+
   const task = await getContentGenerationTask(taskId)
   if (!task) throw createError({ statusCode: 404, statusMessage: '任务不存在' })
 
   await updateContentGenerationTaskStatus(taskId, 'generating', auth)
+  await emit('status', { status: 'generating' })
 
   let sourceData = null
   let rawOutput = ''
@@ -113,26 +124,50 @@ export async function generateContentForTask(taskId, event, auth) {
   let usage = null
 
   try {
+    await emit('phase', { phase: 'building_source' })
     sourceData = await buildContentSourceData(task)
     const sourceValidation = validateSourceData(sourceData)
     if (!sourceValidation.ok) throw new Error(`sourceData 校验失败：${sourceValidation.errors.join('；')}`)
+
+    await emit('source', { sourceDataJson: sourceData })
 
     const sourcePrompt = buildContentPrompt(sourceData)
     promptVersion = await resolvePromptVersion(task, sourceData, sourcePrompt)
     let activeUserPrompt = promptVersion.userPrompt
 
     for (let generationAttempt = 0; generationAttempt <= EXPAND_RETRY_LIMIT; generationAttempt += 1) {
-      const aiResult = await callContentGenerationAi({
+      if (generationAttempt > 0) {
+        await emit('phase', { phase: 'expanding', attempt: generationAttempt + 1, clearOutput: true })
+      }
+      else {
+        await emit('phase', { phase: 'generating', attempt: 1 })
+      }
+
+      const aiParams = {
         systemPrompt: promptVersion.systemPrompt,
         userPrompt: activeUserPrompt,
-      }, event)
+      }
+
+      const aiResult = streaming
+        ? await callContentGenerationAiStream({
+            ...aiParams,
+            onChunk: async (text) => {
+              await emit('chunk', { text })
+            },
+          }, event)
+        : await callContentGenerationAi(aiParams, event)
+
       apiRetryCount += aiResult.retryCount
       provider = aiResult.provider
       usage = aiResult.usage
       rawOutput = aiResult.rawOutput
+
+      await emit('phase', { phase: 'parsing' })
       parsedContent = parseGeneratedJson(rawOutput)
       enforceReviewState(parsedContent)
       if (!parsedContent.sources?.length && sourceData.sources?.length) parsedContent.sources = sourceData.sources
+
+      await emit('phase', { phase: 'validating' })
       validationResult = validateGeneratedContentPage(parsedContent, sourceData)
       if (validationResult.normalizedSources?.length) parsedContent.sources = validationResult.normalizedSources
 
@@ -161,7 +196,7 @@ export async function generateContentForTask(taskId, event, auth) {
 
     if (!validationResult?.ok) {
       const message = `生成结果未达到 production-ready SEO draft 标准：${validationResult?.errors?.join('；') || 'unknown validation error'}`
-      await saveContentGenerationTaskGenerationResult(taskId, {
+      const failedTask = await saveContentGenerationTaskGenerationResult(taskId, {
         status: 'failed',
         contentJson: parsedContent,
         sourceDataJson: sourceData,
@@ -175,7 +210,7 @@ export async function generateContentForTask(taskId, event, auth) {
         validationJson,
         errorMessage: message,
       }, auth)
-      throw createError({ statusCode: 422, statusMessage: message })
+      throw createError({ statusCode: 422, statusMessage: message, data: failedTask })
     }
 
     return saveContentGenerationTaskGenerationResult(taskId, {
