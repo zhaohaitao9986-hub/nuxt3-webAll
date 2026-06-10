@@ -1,4 +1,5 @@
 import { createError } from 'h3'
+import { callContentGenerationAi } from './aiClient'
 import {
   getContentGenerationTask,
   saveContentGenerationTaskGenerationResult,
@@ -15,77 +16,13 @@ import {
 } from './promptVersion'
 import { validateGeneratedContentPage, validateSourceData } from './validators'
 
-const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1'
-const DEFAULT_TIMEOUT_MS = 300000
-const API_RETRY_LIMIT = 2
-const API_RETRY_DELAY_MS = 3000
 const EXPAND_RETRY_LIMIT = 1
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
 
 function parseGeneratedJson(rawOutput) {
   const trimmed = rawOutput.trim()
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
   const jsonText = fenced?.[1]?.trim() || trimmed
   return JSON.parse(jsonText)
-}
-
-async function callAi({ systemPrompt, userPrompt }, event) {
-  const config = useRuntimeConfig(event)
-  const apiKey = config.aiApiKey || process.env.AI_API_KEY || process.env.DEEPSEEK_API_KEY || ''
-  const baseUrl = config.aiBaseUrl || process.env.AI_BASE_URL || DEEPSEEK_BASE_URL
-  const timeoutMs = Number(config.aiTimeoutMs || process.env.AI_TIMEOUT_MS || DEFAULT_TIMEOUT_MS)
-
-  if (!apiKey) throw new Error('AI_API_KEY 或 DEEPSEEK_API_KEY 未配置')
-
-  let lastError = null
-  for (let attempt = 0; attempt <= API_RETRY_LIMIT; attempt += 1) {
-    try {
-      const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        signal: AbortSignal.timeout(timeoutMs),
-        body: JSON.stringify({
-          model: PRODUCTION_MODEL,
-          temperature: PRODUCTION_TEMPERATURE,
-          max_tokens: PRODUCTION_MAX_TOKENS,
-          stream: false,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-        }),
-      })
-
-      if (!response.ok) {
-        const text = await response.text().catch(() => '')
-        throw new Error(`AI 请求失败：${response.status} ${text || response.statusText}`)
-      }
-
-      const body = await response.json()
-      const content = body?.choices?.[0]?.message?.content || ''
-      if (!content.trim()) throw new Error('AI 返回内容为空')
-
-      return {
-        rawOutput: content.trim(),
-        provider: baseUrl,
-        retryCount: attempt,
-        usage: body?.usage || null,
-      }
-    }
-    catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error))
-      if (attempt < API_RETRY_LIMIT) await sleep(API_RETRY_DELAY_MS * (attempt + 1))
-    }
-  }
-  const finalError = lastError || new Error('DeepSeek request failed')
-  finalError.retryCount = API_RETRY_LIMIT
-  throw finalError
 }
 
 function enforceReviewState(content) {
@@ -103,6 +40,7 @@ function shouldExpand(validation) {
     'matrixRowCount',
     'criteriaCount',
     'recommendedToolsCount',
+    'toolCalloutCount',
     'minSectionWordCount',
     'minFaqAnswerWordCount',
     'minRecommendedToolWordCount',
@@ -117,11 +55,16 @@ function shouldExpand(validation) {
 }
 
 function buildValidationPayload(validation, metadata) {
+  const metrics = validation?.metrics || {}
   return {
     ...validation,
+    contentType: metadata.contentType,
+    generatorName: metadata.generatorName,
+    selectedToolStrategy: metadata.selectedToolStrategy,
     model: PRODUCTION_MODEL,
     temperature: PRODUCTION_TEMPERATURE,
     max_tokens: PRODUCTION_MAX_TOKENS,
+    maxTokens: PRODUCTION_MAX_TOKENS,
     max_completion_tokens: null,
     promptVersion: metadata.promptVersion,
     promptVersionId: metadata.promptVersionId,
@@ -129,6 +72,24 @@ function buildValidationPayload(validation, metadata) {
     apiRetryCount: metadata.apiRetryCount,
     expandRetryCount: metadata.expandRetryCount,
     generationMode: GENERATION_MODE,
+    wordCount: metrics.wordCount || 0,
+    blockCount: metrics.blockCount || 0,
+    faqCount: metrics.faqCount || 0,
+    sourceCount: metrics.sourceCount || validation?.normalizedSources?.length || metadata.sourceCount || 0,
+    toolCount: metadata.toolCount || 0,
+    criteriaCount: metrics.criteriaCount || 0,
+    matrixRowCount: metrics.matrixRowCount || 0,
+    score: validation?.score || 0,
+    passed: Boolean(validation?.passed),
+    failedChecks: validation?.failedChecks?.length
+      ? validation.failedChecks
+      : validation?.passed ? [] : ['generationError'],
+    warnings: validation?.warnings || [],
+    missingToolFields: validation?.missingToolFields || [],
+    normalizedSources: validation?.normalizedSources?.length
+      ? validation.normalizedSources
+      : metadata.normalizedSources || [],
+    typedWriteStatus: metadata.typedWriteStatus || 'not-written-review-stage',
     provider: metadata.provider,
     usage: metadata.usage,
     generatedAt: new Date().toISOString(),
@@ -148,7 +109,7 @@ export async function generateContentForTask(taskId, event, auth) {
   let promptVersion = null
   let apiRetryCount = 0
   let expandRetryCount = 0
-  let provider = DEEPSEEK_BASE_URL
+  let provider = 'https://api.deepseek.com/v1'
   let usage = null
 
   try {
@@ -161,7 +122,7 @@ export async function generateContentForTask(taskId, event, auth) {
     let activeUserPrompt = promptVersion.userPrompt
 
     for (let generationAttempt = 0; generationAttempt <= EXPAND_RETRY_LIMIT; generationAttempt += 1) {
-      const aiResult = await callAi({
+      const aiResult = await callContentGenerationAi({
         systemPrompt: promptVersion.systemPrompt,
         userPrompt: activeUserPrompt,
       }, event)
@@ -173,6 +134,7 @@ export async function generateContentForTask(taskId, event, auth) {
       enforceReviewState(parsedContent)
       if (!parsedContent.sources?.length && sourceData.sources?.length) parsedContent.sources = sourceData.sources
       validationResult = validateGeneratedContentPage(parsedContent, sourceData)
+      if (validationResult.normalizedSources?.length) parsedContent.sources = validationResult.normalizedSources
 
       if (validationResult.ok) break
       if (generationAttempt >= EXPAND_RETRY_LIMIT || !shouldExpand(validationResult)) break
@@ -189,6 +151,12 @@ export async function generateContentForTask(taskId, event, auth) {
       expandRetryCount,
       provider,
       usage,
+      contentType: sourceData.contentType,
+      generatorName: sourceData.task === 'generate_compare' ? 'compare-generator' : 'guide-generator',
+      selectedToolStrategy: sourceData.selectedToolStrategy,
+      toolCount: sourceData.tools?.length || 0,
+      sourceCount: sourceData.sources?.length || 0,
+      normalizedSources: validationResult?.normalizedSources || sourceData.sources || [],
     })
 
     if (!validationResult?.ok) {
@@ -245,6 +213,14 @@ export async function generateContentForTask(taskId, event, auth) {
       expandRetryCount,
       provider,
       usage,
+      contentType: sourceData?.contentType || task.contentType?.toUpperCase?.() || task.contentType,
+      generatorName: sourceData?.task === 'generate_compare'
+        ? 'compare-generator'
+        : sourceData?.task === 'generate_guide' ? 'guide-generator' : 'unsupported-generator',
+      selectedToolStrategy: sourceData?.selectedToolStrategy || null,
+      toolCount: sourceData?.tools?.length || 0,
+      sourceCount: sourceData?.sources?.length || 0,
+      normalizedSources: validationResult?.normalizedSources || sourceData?.sources || [],
     })
 
     await saveContentGenerationTaskGenerationResult(taskId, {

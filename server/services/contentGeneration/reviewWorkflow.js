@@ -80,6 +80,6 @@ export async function publishApprovedTask(taskId, auth) {
   }
 
   const finalContent = validateBeforePublish(task)
-  const contentPage = await upsertPublishedContentFromTask(task, finalContent)
-  return markContentGenerationTaskPublished(taskId, finalContent, auth, contentPage.id)
+  const published = await upsertPublishedContentFromTask(task, finalContent)
+  return markContentGenerationTaskPublished(taskId, finalContent, auth, published.page.id, published.typedWriteStatus)
 }

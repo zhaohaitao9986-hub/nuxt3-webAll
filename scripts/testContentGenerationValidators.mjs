@@ -141,7 +141,10 @@ const compare = {
     criteriaJson: Array.from({ length: 6 }, (_, index) => ({ name: `Criterion ${index + 1}`, analysis: exactWords(12) })),
     matrixJson: Array.from({ length: 8 }, (_, index) => ({ criterion: `Matrix row ${index + 1}`, primary: exactWords(8), secondary: exactWords(8) })),
   },
-  comparisonTools: [{ toolId: 1, sort: 1 }, { toolId: 2, sort: 2 }],
+  comparisonTools: [
+    { toolId: 1, position: 1, label: 'Primary', bestFor: 'Structured teams', summary: 'A grounded primary-tool summary.' },
+    { toolId: 2, position: 2, label: 'Secondary', bestFor: 'Flexible teams', summary: 'A grounded secondary-tool summary.' },
+  ],
   alternativePage: null,
   alternativeTools: [],
   sources,
@@ -151,6 +154,11 @@ const guideValidation = validateGeneratedContentPage(guide, guideSource)
 const compareValidation = validateGeneratedContentPage(compare, compareSource)
 assert.equal(guideValidation.ok, true, guideValidation.errors.join('\n'))
 assert.equal(compareValidation.ok, true, compareValidation.errors.join('\n'))
+assert.equal(guideValidation.score >= 85, true)
+assert.equal(compareValidation.score >= 85, true)
+assert.equal(guideValidation.normalizedSources.length, 6)
+assert.equal(compareValidation.normalizedSources.length, 2)
+assert.equal(compareValidation.warnings.filter(message => message.startsWith('Unused source:')).length, 4)
 
 const thinGuide = structuredClone(guide)
 thinGuide.bodyJson.blocks = thinGuide.bodyJson.blocks.slice(0, 6)
@@ -159,8 +167,24 @@ assert.equal(thinValidation.ok, false)
 assert.equal(thinValidation.checks.blockCount.passed, false)
 assert.equal(thinValidation.checks.wordCount.passed, false)
 
+const riskyGuide = structuredClone(guide)
+riskyGuide.bodyJson.blocks[3].html += '<p>This workflow can bypass AI detectors.</p>'
+const riskyValidation = validateGeneratedContentPage(riskyGuide, guideSource)
+assert.equal(riskyValidation.ok, false)
+assert.match(riskyValidation.errors.join('\n'), /High-risk expression/)
+
+const unsupported = structuredClone(guide)
+unsupported.contentPage.type = 'TOOL_REVIEW'
+const unsupportedValidation = validateGeneratedContentPage(unsupported, null)
+assert.equal(unsupportedValidation.ok, false)
+assert.match(unsupportedValidation.errors.join('\n'), /unsupportedContentType/)
+
 console.log(JSON.stringify({
   guide: guideValidation.metrics,
   compare: compareValidation.metrics,
+  guideScore: guideValidation.score,
+  compareScore: compareValidation.score,
   thinGuideRejected: !thinValidation.ok,
+  riskyGuideRejected: !riskyValidation.ok,
+  unsupportedTypeRejected: !unsupportedValidation.ok,
 }, null, 2))

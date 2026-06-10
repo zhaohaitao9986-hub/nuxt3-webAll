@@ -52,6 +52,23 @@ export const FORBIDDEN_CLAIM_PATTERNS = [
 export const FAQ_RANKING_QUESTION_PATTERN
   = /^\s*(?:what|which|who)\b[\s\S]{0,160}\b(?:best|top\s*\d*|#\s*1|number\s*one|ranked\s*#?\s*1)\b/i
 
+export const HIGH_RISK_EXPRESSION_PATTERNS = [
+  { label: 'bypass AI detectors', pattern: /\bbypass(?:es|ing)?\s+(?:AI\s+)?detectors?\b/i },
+  { label: 'avoid penalties', pattern: /\bavoid(?:s|ing)?\s+(?:Google\s+|search\s+)?penalt(?:y|ies)\b/i },
+  { label: 'guarantee rankings', pattern: /\bguarantee(?:d|s|ing)?\s+(?:search\s+|Google\s+)?rankings?\b/i },
+  { label: 'undetectable', pattern: /\bundetectable\b/i },
+  { label: 'fool detectors', pattern: /\bfool(?:s|ing)?\s+(?:AI\s+)?detectors?\b/i },
+  { label: 'Google penalty guarantee', pattern: /\bGoogle\s+penalt(?:y|ies)\s+(?:guaranteed|avoided)\b/i },
+]
+
+export const HIGH_RISK_REPLACEMENTS = [
+  'improve readability',
+  'make AI-assisted drafts sound more natural',
+  'support human review',
+  'reduce repetitive wording',
+  'verify claims before publishing',
+]
+
 export const QUALITATIVE_PRICING_POLICY = [
   'Do not write dollar amounts, numeric per-month prices, or "starts at" prices.',
   'Use qualitative wording such as free tier, trial, paid tiers, monthly or annual billing, and limits vary by plan.',
@@ -168,6 +185,8 @@ export const sharedContentRules = {
   safety: [
     'Do not include script, iframe, inline event handlers, or unsafe HTML.',
     'Do not make legal, medical, financial, or guaranteed-performance claims.',
+    'Do not promise detector evasion, penalty avoidance, guaranteed rankings, undetectability, or fooling detection systems.',
+    `Prefer safer language: ${HIGH_RISK_REPLACEMENTS.join(', ')}.`,
   ],
   forbiddenPhrases: [
     `Do not use unsupported absolute claims: ${FORBIDDEN_CLAIM_LABELS.join(', ')}.`,

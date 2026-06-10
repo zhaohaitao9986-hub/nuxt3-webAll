@@ -1,5 +1,13 @@
 import prisma from '~/server/utils/prisma'
 
+const SUPPORTED_CONTENT_TYPES = new Set([
+  'BUYER_GUIDE',
+  'CATEGORY_GUIDE',
+  'TUTORIAL',
+  'COMPARISON',
+  'ALTERNATIVE',
+])
+
 function toNumber(value) {
   if (value == null) return null
   if (typeof value === 'object' && 'toString' in value) return Number(value.toString())
@@ -189,41 +197,96 @@ async function fetchRelatedCategories(categoryId) {
   return rows.map((row) => mapCategory(row, mapCategory(row.level1)))
 }
 
-async function fetchTools(task) {
-  const limit = Math.min(30, Math.max(1, Number(task.limit) || 10))
+function toolInclude() {
+  return {
+    pricingPlans: {
+      orderBy: [{ isFree: 'desc' }, { price: 'asc' }, { id: 'asc' }],
+      take: 6,
+      include: { source: true },
+    },
+    claims: {
+      where: { status: 'ACTIVE' },
+      orderBy: [{ confidence: 'desc' }, { id: 'asc' }],
+      take: 12,
+      include: { source: true },
+    },
+    platforms: {
+      orderBy: [{ platform: 'asc' }],
+      include: { source: true },
+    },
+    socialLinks: {
+      orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }],
+      include: { source: true },
+    },
+    toolCategories: {
+      select: { categoryId: true },
+      orderBy: { categoryId: 'asc' },
+    },
+  }
+}
+
+async function fetchTools({ categoryId = null, toolId = null, limit = 10, excludeIds = [] } = {}) {
+  const safeLimit = Math.min(30, Math.max(1, Number(limit) || 10))
   const where = {
     toolStatus: { in: ['ONLINE', 'ACTIVE'] },
     handle: { not: '' },
     name: { not: '' },
-    ...(task.toolId ? { id: Number(task.toolId) } : {}),
-    ...(task.categoryId && !task.toolId ? { toolCategories: { some: { categoryId: Number(task.categoryId) } } } : {}),
+    ...(toolId ? { id: Number(toolId) } : {}),
+    ...(excludeIds.length ? { id: { notIn: excludeIds.map(Number) } } : {}),
+    ...(categoryId ? { toolCategories: { some: { categoryId: Number(categoryId) } } } : {}),
   }
   return prisma.aiTool.findMany({
     where,
     orderBy: [{ rank: 'asc' }, { monthVisitedCount: 'desc' }, { updatedAt: 'desc' }],
-    include: {
-      pricingPlans: {
-        orderBy: [{ isFree: 'desc' }, { price: 'asc' }, { id: 'asc' }],
-        take: 6,
-        include: { source: true },
-      },
-      claims: {
-        where: { status: 'ACTIVE' },
-        orderBy: [{ confidence: 'desc' }, { id: 'asc' }],
-        take: 12,
-        include: { source: true },
-      },
-      platforms: {
-        orderBy: [{ platform: 'asc' }],
-        include: { source: true },
-      },
-      socialLinks: {
-        orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }],
-        include: { source: true },
-      },
-    },
-    take: limit,
+    include: toolInclude(),
+    take: safeLimit,
   })
+}
+
+function requestedToolIds(task) {
+  const promptJson = task.promptJson && typeof task.promptJson === 'object' ? task.promptJson : {}
+  return {
+    primaryToolId: Number(task.primaryToolId || promptJson.primaryToolId || task.toolId) || null,
+    secondaryToolId: Number(task.secondaryToolId || promptJson.secondaryToolId) || null,
+  }
+}
+
+async function fetchCompareTools(task) {
+  const { primaryToolId, secondaryToolId } = requestedToolIds(task)
+  const limit = Math.min(30, Math.max(2, Number(task.limit) || 10))
+
+  let primaryTool = null
+  let secondaryTool = null
+  if (primaryToolId) {
+    primaryTool = (await fetchTools({ toolId: primaryToolId, limit: 1 }))[0] || null
+    if (!primaryTool) throw new Error(`primaryToolNotFound: ${primaryToolId}`)
+  }
+  if (secondaryToolId) {
+    secondaryTool = (await fetchTools({ toolId: secondaryToolId, limit: 1 }))[0] || null
+    if (!secondaryTool) throw new Error(`secondaryToolNotFound: ${secondaryToolId}`)
+  }
+  if (primaryTool && secondaryTool && primaryTool.id === secondaryTool.id) {
+    throw new Error('secondaryToolSameAsPrimary')
+  }
+
+  const inferredCategoryId = Number(task.categoryId)
+    || Number(primaryTool?.toolCategories?.[0]?.categoryId)
+    || null
+  const candidates = await fetchTools({ categoryId: inferredCategoryId, limit })
+  if (!primaryTool) primaryTool = candidates[0] || null
+  if (!secondaryTool) secondaryTool = candidates.find(tool => tool.id !== primaryTool?.id) || null
+
+  if (!primaryTool) throw new Error('primaryToolNotFound')
+  if (!secondaryTool) throw new Error('secondaryToolNotFound: no distinct tool available in the selected category')
+
+  const tools = Array.from(new Map([primaryTool, secondaryTool, ...candidates].map(tool => [tool.id, tool])).values())
+  const selectedToolStrategy = secondaryToolId
+    ? 'explicit-primary-secondary'
+    : primaryToolId
+      ? 'task-toolId-primary-category-secondary'
+      : 'category-ranked-primary-secondary'
+
+  return { tools, primaryTool, secondaryTool, selectedToolStrategy, inferredCategoryId }
 }
 
 function buildSlug(task, category, tools, suffix) {
@@ -232,9 +295,27 @@ function buildSlug(task, category, tools, suffix) {
 }
 
 export async function buildContentSourceData(task) {
+  const type = String(task.contentType || '').trim().toUpperCase()
+  if (!SUPPORTED_CONTENT_TYPES.has(type)) {
+    throw new Error(`unsupportedContentType: ${type || '(empty)'}`)
+  }
+
+  if (type === 'COMPARISON' || type === 'ALTERNATIVE') {
+    const selection = await fetchCompareTools(task)
+    const categoryId = Number(task.categoryId) || selection.inferredCategoryId
+    const [category, relatedCategories] = await Promise.all([
+      fetchCategory(categoryId),
+      fetchRelatedCategories(categoryId),
+    ])
+    if (task.categoryId && !category) {
+      throw new Error(`categoryNotFound: categoryId=${task.categoryId}`)
+    }
+    return buildCompareSourceData(task, category, selection.tools, relatedCategories, selection)
+  }
+
   const [category, tools, relatedCategories] = await Promise.all([
     fetchCategory(task.categoryId),
-    fetchTools(task),
+    fetchTools({ categoryId: task.categoryId, toolId: task.toolId, limit: task.limit }),
     fetchRelatedCategories(task.categoryId),
   ])
 
@@ -245,18 +326,15 @@ export async function buildContentSourceData(task) {
     throw new Error('没有找到可用于生成的已发布 AI 工具数据')
   }
 
-  const type = String(task.contentType || 'BUYER_GUIDE').trim().toUpperCase()
-  if (type === 'COMPARISON' || type === 'ALTERNATIVE') {
-    return buildCompareSourceData(task, category, tools, relatedCategories)
-  }
   return buildGuideSourceData(task, category, tools, relatedCategories)
 }
 
 function buildGuideSourceData(task, category, tools, relatedCategories) {
   const requestedType = String(task.contentType || '').trim().toUpperCase()
-  const contentType = ['BUYER_GUIDE', 'CATEGORY_GUIDE', 'TUTORIAL'].includes(requestedType)
-    ? requestedType
-    : 'BUYER_GUIDE'
+  if (!['BUYER_GUIDE', 'CATEGORY_GUIDE', 'TUTORIAL'].includes(requestedType)) {
+    throw new Error(`unsupportedContentType: ${requestedType || '(empty)'}`)
+  }
+  const contentType = requestedType
   const slug = buildSlug(task, category, tools, contentType === 'TUTORIAL' ? 'tutorial' : '')
   const mappedTools = tools.map(mapTool)
   const primaryTool = task.toolId ? mappedTools[0] || null : null
@@ -275,6 +353,7 @@ function buildGuideSourceData(task, category, tools, relatedCategories) {
     topTools: mappedTools,
     tools: mappedTools,
     sources: collectSources(tools),
+    selectedToolStrategy: task.toolId ? 'explicit-guide-tool' : 'category-ranked-tools',
     siteRules: {
       brand: 'AISeekTools',
       forbiddenClaims: ['unverified pricing', 'guaranteed outcomes', 'legal advice', 'medical advice', 'financial advice'],
@@ -282,10 +361,10 @@ function buildGuideSourceData(task, category, tools, relatedCategories) {
   }
 }
 
-function buildCompareSourceData(task, category, tools, relatedCategories) {
+function buildCompareSourceData(task, category, tools, relatedCategories, selection) {
   const mappedTools = tools.map(mapTool)
-  const primaryTool = mappedTools[0] || null
-  const secondaryTool = mappedTools.find((tool) => tool.id !== primaryTool?.id) || null
+  const primaryTool = mappedTools.find(tool => tool.id === selection.primaryTool.id) || null
+  const secondaryTool = mappedTools.find(tool => tool.id === selection.secondaryTool.id) || null
   const contentType = String(task.contentType || '').trim().toUpperCase() === 'ALTERNATIVE'
     ? 'ALTERNATIVE'
     : 'COMPARISON'
@@ -303,6 +382,7 @@ function buildCompareSourceData(task, category, tools, relatedCategories) {
     language: 'en',
     primaryTool,
     secondaryTool,
+    selectedToolStrategy: selection.selectedToolStrategy,
     tools: mappedTools,
     category: category?.level2 || null,
     categoryTopTools: mappedTools,

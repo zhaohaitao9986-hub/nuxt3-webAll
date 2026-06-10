@@ -6,6 +6,11 @@ import {
   QUALITATIVE_PRICING_POLICY,
   contentRules,
 } from './editorialRules'
+import {
+  ALTERNATIVE_RESPONSE_SHAPE,
+  COMPARE_RESPONSE_SHAPE,
+  GUIDE_RESPONSE_SHAPE,
+} from './responseSchemas'
 
 export const editorialSystemPrompt = [
   'You are the production editorial content generation engine for AISeekTools.',
@@ -124,29 +129,6 @@ function compactCompareSource(sourceData) {
   }
 }
 
-const guideOutputShape = {
-  contentPage: {
-    type: 'BUYER_GUIDE',
-    slug: 'requested-slug',
-    canonicalPath: '/guides/requested-slug',
-    title: 'string',
-    metaTitle: `string <= ${META_LIMITS.metaTitleMax} chars`,
-    metaDescription: `string <= ${META_LIMITS.metaDescriptionMax} chars`,
-    summary: 'string',
-    robots: 'NOINDEX_FOLLOW',
-    status: 'REVIEW',
-  },
-  bodyJson: {
-    version: 1,
-    meta: { intent: 'choose_tools', level2Id: 0, readingMinutes: 12 },
-    tools: ['source-handle'],
-    blocks: [],
-  },
-  tutorialPage: null,
-  categoryContentPage: null,
-  sources: [],
-}
-
 export function buildContentPrompt(sourceData) {
   return sourceData.task === 'generate_compare'
     ? buildCompareUserPrompt(sourceData)
@@ -181,9 +163,9 @@ export function buildGuideUserPrompt(sourceData) {
     '',
     'Required output shape:',
     JSON.stringify({
-      ...guideOutputShape,
+      ...GUIDE_RESPONSE_SHAPE.example,
       contentPage: {
-        ...guideOutputShape.contentPage,
+        ...GUIDE_RESPONSE_SHAPE.example.contentPage,
         type: sourceData.contentType,
         slug: sourceData.slug,
         canonicalPath: sourceData.canonicalPath,
@@ -219,65 +201,54 @@ export function buildCompareUserPrompt(sourceData) {
     'Non-negotiable validation targets:',
     `- ${PRODUCTION_LIMITS.compare.minWords}-${PRODUCTION_LIMITS.compare.maxWords} English editorial words`,
     `- ${PRODUCTION_LIMITS.compare.minBlocks}-${PRODUCTION_LIMITS.compare.maxBlocks} body blocks`,
-    `- at least ${PRODUCTION_LIMITS.compare.minMatrixRows} matrix rows`,
+    sourceData.contentType === 'COMPARISON'
+      ? `- at least ${PRODUCTION_LIMITS.compare.minMatrixRows} matrix rows`
+      : '- include at least one grounded alternative tool distinct from the primary tool',
     `- at least ${PRODUCTION_LIMITS.compare.minCriteria} meaningful criteria`,
     `- at least ${PRODUCTION_LIMITS.compare.minFaqItems} FAQ items`,
     `- each section >= ${PRODUCTION_LIMITS.compare.minSectionWords} words`,
     `- each FAQ answer >= ${PRODUCTION_LIMITS.compare.minFaqAnswerWords} words`,
     `- verdict >= ${PRODUCTION_LIMITS.compare.minVerdictWords} words and scenario-specific`,
     '- contentPage.status = REVIEW and robots = NOINDEX_FOLLOW',
-    '- comparisonPage.matrixJson must be an array of rows or an object containing a rows array',
-    '- comparisonPage.criteriaJson must be an array or an object containing a criteria array',
+    sourceData.contentType === 'COMPARISON'
+      ? '- comparisonPage.matrixJson must be an array of rows or an object containing a rows array'
+      : '- alternativePage.selectionCriteriaJson must be an array or an object containing a criteria array',
     '',
     'Block shape reference:',
     JSON.stringify(contentRules.compare.blockSchemas, null, 2),
     '',
     'Required output shape:',
-    JSON.stringify({
-      contentPage: {
-        type: sourceData.contentType,
-        slug: sourceData.slug,
-        canonicalPath: sourceData.canonicalPath,
-        title: 'string',
-        metaTitle: 'string',
-        metaDescription: 'string',
-        summary: 'string',
-        robots: 'NOINDEX_FOLLOW',
-        status: 'REVIEW',
-      },
-      bodyJson: { version: 1, blocks: [] },
-      comparisonPage: sourceData.contentType === 'COMPARISON'
-        ? {
-            comparisonType: sourceData.comparisonType,
-            primaryToolId: sourceData.primaryTool?.id || null,
-            secondaryToolId: sourceData.secondaryTool?.id || null,
-            verdict: 'specific 80+ word verdict',
-            criteriaJson: [{ name: 'criterion', analysis: 'meaningful analysis' }],
-            matrixJson: [{ criterion: 'row label', primary: 'grounded value', secondary: 'grounded value' }],
-          }
-        : null,
-      comparisonTools: sourceData.contentType === 'COMPARISON'
-        ? [{ toolId: sourceData.primaryTool?.id || 0, sort: 1 }]
-        : [],
-      alternativePage: sourceData.contentType === 'ALTERNATIVE'
-        ? {
-            primaryToolId: sourceData.primaryTool?.id || 0,
-            reasonToSwitch: 'specific explanation',
-            selectionCriteriaJson: [{ name: 'criterion', description: 'meaningful criterion' }],
-            matrixJson: [{ criterion: 'row label', primary: 'current tool', alternative: 'alternative option' }],
-          }
-        : null,
-      alternativeTools: sourceData.contentType === 'ALTERNATIVE'
-        ? [{ toolId: sourceData.secondaryTool?.id || 0, rank: 1, reason: 'grounded reason' }]
-        : [],
-      sources: 'copy sourceData.sources exactly',
-    }, null, 2),
+    JSON.stringify(buildCompareShapeExample(sourceData), null, 2),
     '',
     'Source data:',
     JSON.stringify(source, null, 2),
     '',
     'Return strict JSON only. The first character must be { and the last character must be }.',
   ].join('\n')
+}
+
+function buildCompareShapeExample(sourceData) {
+  const base = structuredClone(
+    sourceData.contentType === 'ALTERNATIVE'
+      ? ALTERNATIVE_RESPONSE_SHAPE.example
+      : COMPARE_RESPONSE_SHAPE.example,
+  )
+  base.contentPage.type = sourceData.contentType
+  base.contentPage.slug = sourceData.slug
+  base.contentPage.canonicalPath = sourceData.canonicalPath
+  if (base.comparisonPage) {
+    base.comparisonPage.comparisonType = sourceData.comparisonType
+    base.comparisonPage.primaryToolId = sourceData.primaryTool?.id || 0
+    base.comparisonPage.secondaryToolId = sourceData.secondaryTool?.id || 0
+    base.comparisonTools[0].toolId = sourceData.primaryTool?.id || 0
+    base.comparisonTools[1].toolId = sourceData.secondaryTool?.id || 0
+  }
+  if (base.alternativePage) {
+    base.alternativePage.primaryToolId = sourceData.primaryTool?.id || 0
+    base.alternativeTools[0].toolId = sourceData.secondaryTool?.id || 0
+  }
+  base.sources = 'copy sourceData.sources exactly'
+  return base
 }
 
 export function applyPromptTemplate(template, sourcePrompt, sourceData) {

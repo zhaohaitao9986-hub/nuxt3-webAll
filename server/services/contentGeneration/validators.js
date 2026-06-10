@@ -3,11 +3,13 @@ import {
   COMPARE_REQUIRED_TOPICS,
   FAQ_RANKING_QUESTION_PATTERN,
   FORBIDDEN_CLAIM_PATTERNS,
+  HIGH_RISK_EXPRESSION_PATTERNS,
   GUIDE_REQUIRED_BLOCK_TYPES,
   GUIDE_REQUIRED_TOPICS,
   META_LIMITS,
   PRODUCTION_LIMITS,
 } from './editorialRules.js'
+import { responseShapeForContentType } from './responseSchemas.js'
 
 const GUIDE_TYPES = new Set(['BUYER_GUIDE', 'CATEGORY_GUIDE', 'TUTORIAL'])
 const COMPARE_TYPES = new Set(['COMPARISON', 'ALTERNATIVE'])
@@ -176,8 +178,12 @@ export function validateGeneratedContentPage(page, sourceData = null) {
   const hasUseCases = /use case|scenario|workflow|when to use/i.test(fullBodyText)
   const sourceTypes = [...(sourceData?.sources || []), ...(page.sources || [])].map(source => String(source?.sourceType || ''))
   const hasOfficialOrInternalSources = sourceTypes.some(type => /OFFICIAL|INTERNAL/i.test(type))
+  const sourceConsistency = sourceData
+    ? validateSourceConsistency(page, sourceData, errors, warnings)
+    : { normalizedSources: page.sources || [], usedTools: [], sourceCount: page.sources?.length || 0 }
 
-  checks.schemaValid = check(errors.length === 0, errors.length === 0, true, { expandable: false })
+  const schemaErrorCount = errors.length
+  checks.schemaValid = check(schemaErrorCount === 0, schemaErrorCount, 0, { expandable: false })
   checks.wordCount = check(wordCount >= limits.minWords && wordCount <= limits.maxWords, wordCount, `${limits.minWords}-${limits.maxWords}`)
   checks.blockCount = check(blocks.length >= limits.minBlocks && blocks.length <= limits.maxBlocks, blocks.length, `${limits.minBlocks}-${limits.maxBlocks}`)
   checks.faqCount = check(faqItems.length >= limits.minFaqItems, faqItems.length, `>= ${limits.minFaqItems}`)
@@ -212,16 +218,31 @@ export function validateGeneratedContentPage(page, sourceData = null) {
 
   if (isGuide) {
     checks.recommendedToolsCount = check(recommendedHandles.size >= limits.minRecommendedTools, recommendedHandles.size, `>= ${limits.minRecommendedTools}`)
+    checks.toolCalloutCount = check(toolCallouts.length >= limits.minRecommendedTools, toolCallouts.length, `>= ${limits.minRecommendedTools}`)
     checks.minRecommendedToolWordCount = check(
       toolNoteWordCounts.length >= limits.minRecommendedTools && toolNoteWordCounts.every(row => row.words >= limits.minToolNoteWords),
       toolNoteWordCounts,
       `at least ${limits.minRecommendedTools} notes; each >= ${limits.minToolNoteWords} words`,
     )
     checks.criteriaCount = check(extractGuideCriteria(blocks).length >= limits.minCriteria, extractGuideCriteria(blocks).length, `>= ${limits.minCriteria}`)
+    checks.sourceCount = check(
+      sourceConsistency.sourceCount >= recommendedHandles.size,
+      sourceConsistency.sourceCount,
+      `>= recommended tool count (${recommendedHandles.size})`,
+      { expandable: false },
+    )
+    checks.sourceToolCoverage = check(
+      sourceConsistency.missingToolSources.length === 0,
+      { missing: sourceConsistency.missingToolSources },
+      'official source for every used tool',
+      { expandable: false },
+    )
   }
 
   if (isCompare) {
-    checks.matrixRowCount = check(matrixRows.length >= limits.minMatrixRows, matrixRows.length, `>= ${limits.minMatrixRows}`)
+    if (pageType === 'COMPARISON') {
+      checks.matrixRowCount = check(matrixRows.length >= limits.minMatrixRows, matrixRows.length, `>= ${limits.minMatrixRows}`)
+    }
     checks.criteriaCount = check(criteria.length >= limits.minCriteria, criteria.length, `>= ${limits.minCriteria}`)
     const verdictWords = countEnglishWords(page.comparisonPage?.verdict || page.alternativePage?.reasonToSwitch || '')
     checks.verdictSpecific = check(verdictWords >= limits.minVerdictWords, verdictWords, `>= ${limits.minVerdictWords} words`)
@@ -233,14 +254,20 @@ export function validateGeneratedContentPage(page, sourceData = null) {
 
   validateRequiredBlockTypes(blocks, isCompare ? COMPARE_REQUIRED_BLOCK_TYPES : GUIDE_REQUIRED_BLOCK_TYPES, errors)
   validateForbiddenClaims(page, errors)
+  validateHighRiskExpressions(page, errors, warnings)
   validateFaqQuestions(faqItems, errors)
   if (sourceData) validateAgainstSource(page, sourceData, errors, warnings)
   if (sourceData) validateToolGrounding(page, sourceData, errors)
 
-  checks.schemaValid = check(!errors.some(error => /required|invalid|must match|must start|unsupported|references tool/i.test(error)), true, true, { expandable: false })
+  const score = calculateScore(checks, isCompare ? 'compare' : 'guide')
+  checks.productionScore = check(score >= 85, score, '>= 85')
+  if (!checks.productionScore.passed) errors.push(`productionScore failed: expected >= 85, got ${score}`)
+  const failedChecks = Object.entries(checks).filter(([, row]) => !row.passed).map(([name]) => name)
 
   return result(errors, warnings, {
     checks,
+    score,
+    failedChecks,
     metrics: {
       wordCount,
       blockCount: blocks.length,
@@ -248,20 +275,36 @@ export function validateGeneratedContentPage(page, sourceData = null) {
       matrixRowCount: matrixRows.length,
       criteriaCount: isGuide ? extractGuideCriteria(blocks).length : criteria.length,
       recommendedToolsCount: recommendedHandles.size,
+      toolCalloutCount: toolCallouts.length,
+      sourceCount: sourceConsistency.sourceCount,
       sectionWordCounts,
       faqAnswerWordCounts,
       toolNoteWordCounts,
     },
     missingToolFields: collectMissingToolFields(sourceData?.tools || []),
+    normalizedSources: sourceConsistency.normalizedSources,
   })
 }
 
 function validateSchema(page, sourceData, errors) {
+  const responseShape = responseShapeForContentType(page.contentPage?.type || sourceData?.contentType)
+  if (!responseShape) {
+    errors.push(`unsupportedContentType: ${page.contentPage?.type || sourceData?.contentType || '(empty)'}`)
+    return
+  }
+  for (const field of responseShape.requiredTopLevel) {
+    if (page[field] === undefined || page[field] === null) errors.push(`${field} is required by response schema`)
+  }
   if (!isObject(page.contentPage)) errors.push('contentPage is required')
   if (!isObject(page.bodyJson)) errors.push('bodyJson is required')
   if (!Array.isArray(page.bodyJson?.blocks)) errors.push('bodyJson.blocks must be an array')
   if (!Array.isArray(page.sources)) errors.push('sources must be an array')
   const meta = page.contentPage || {}
+  for (const field of responseShape.contentPageFields) {
+    if (meta[field] === undefined || meta[field] === null || meta[field] === '') {
+      errors.push(`contentPage.${field} is required by response schema`)
+    }
+  }
   if (!GUIDE_TYPES.has(meta.type) && !COMPARE_TYPES.has(meta.type)) errors.push('unsupported contentPage.type')
   if (!isSlug(meta.slug)) errors.push('contentPage.slug must be lowercase kebab-case')
   for (const field of ['title', 'metaTitle', 'metaDescription', 'summary']) {
@@ -282,6 +325,39 @@ function validateSchema(page, sourceData, errors) {
     if (meta.type === 'COMPARISON' && !Array.isArray(page.comparisonTools)) errors.push('COMPARISON requires comparisonTools')
     if (meta.type === 'ALTERNATIVE' && !isObject(page.alternativePage)) errors.push('ALTERNATIVE requires alternativePage')
     if (meta.type === 'ALTERNATIVE' && !Array.isArray(page.alternativeTools)) errors.push('ALTERNATIVE requires alternativeTools')
+    if (meta.type === 'COMPARISON' && isObject(page.comparisonPage)) {
+      for (const field of responseShape.comparisonPageFields || []) {
+        if (page.comparisonPage[field] === undefined || page.comparisonPage[field] === null) {
+          errors.push(`comparisonPage.${field} is required by response schema`)
+        }
+      }
+      if ((page.comparisonTools || []).length < 2) errors.push('comparisonTools must include primary and secondary tools')
+      for (const [index, tool] of (page.comparisonTools || []).entries()) {
+        for (const field of responseShape.comparisonToolFields || []) {
+          if (tool?.[field] === undefined || tool?.[field] === null) errors.push(`comparisonTools[${index}].${field} is required by response schema`)
+        }
+      }
+      const comparisonToolIds = new Set((page.comparisonTools || []).map(tool => String(tool?.toolId)))
+      for (const toolId of [page.comparisonPage.primaryToolId, page.comparisonPage.secondaryToolId]) {
+        if (toolId != null && !comparisonToolIds.has(String(toolId))) errors.push(`comparisonTools must include comparisonPage tool id ${toolId}`)
+      }
+    }
+    if (meta.type === 'ALTERNATIVE' && isObject(page.alternativePage)) {
+      for (const field of responseShape.alternativePageFields || []) {
+        if (page.alternativePage[field] === undefined || page.alternativePage[field] === null) {
+          errors.push(`alternativePage.${field} is required by response schema`)
+        }
+      }
+      for (const [index, tool] of (page.alternativeTools || []).entries()) {
+        for (const field of responseShape.alternativeToolFields || []) {
+          if (tool?.[field] === undefined || tool?.[field] === null) errors.push(`alternativeTools[${index}].${field} is required by response schema`)
+        }
+      }
+      if (!(page.alternativeTools || []).length) errors.push('alternativeTools must include at least one alternative')
+      if ((page.alternativeTools || []).some(tool => String(tool?.toolId) === String(page.alternativePage.primaryToolId))) {
+        errors.push('alternativeTools must not repeat alternativePage.primaryToolId')
+      }
+    }
   }
   if (sourceData && meta.type !== sourceData.contentType) errors.push('contentPage.type must match sourceData.contentType')
   if (sourceData && meta.slug !== sourceData.slug) errors.push('contentPage.slug must match sourceData.slug')
@@ -353,6 +429,18 @@ function validateForbiddenClaims(page, errors) {
   if (/<script\b|<iframe\b|\son\w+\s*=/i.test(haystack)) errors.push('Unsafe HTML is not allowed')
 }
 
+function validateHighRiskExpressions(page, errors, warnings) {
+  const text = []
+  collectStrings(page, text)
+  const haystack = text.join('\n')
+  for (const risk of HIGH_RISK_EXPRESSION_PATTERNS) {
+    if (risk.pattern.test(haystack)) {
+      errors.push(`High-risk expression found: ${risk.label}`)
+      warnings.push(`Replace "${risk.label}" with readability, natural-draft, human-review, or claim-verification language`)
+    }
+  }
+}
+
 function validateFaqQuestions(items, errors) {
   items.forEach((item, index) => {
     if (FAQ_RANKING_QUESTION_PATTERN.test(String(item?.question || ''))) {
@@ -390,6 +478,122 @@ function validateAgainstSource(page, sourceData, errors, warnings) {
       errors.push(`categoryContentPage.level2Id must match source category.level2.id (${expectedLevel2})`)
     }
   }
+}
+
+function validateSourceConsistency(page, sourceData, errors, warnings) {
+  const tools = uniqueTools(sourceData)
+  const used = collectUsedTools(page, tools)
+  const candidates = dedupeSources([...(page.sources || []), ...(sourceData.sources || [])])
+  const normalizedSources = []
+  const missingToolSources = []
+
+  for (const tool of used) {
+    const matches = candidates.filter(source => sourceMatchesTool(source, tool))
+    if (!matches.length) {
+      missingToolSources.push(tool.handle || tool.name || String(tool.id))
+      errors.push(`Missing source for used tool: ${tool.handle || tool.name || tool.id}`)
+      continue
+    }
+    for (const source of matches) {
+      if (!normalizedSources.some(row => normalizeUrl(row.url) === normalizeUrl(source.url))) normalizedSources.push(source)
+    }
+  }
+
+  for (const source of page.sources || []) {
+    if (!used.some(tool => sourceMatchesTool(source, tool))) {
+      warnings.push(`Unused source: ${source.url || source.title || 'unknown source'}`)
+    }
+  }
+
+  normalizedSources.forEach((source, index) => { source.sort = index + 1 })
+  return {
+    normalizedSources,
+    usedTools: used.map(tool => ({ id: tool.id, handle: tool.handle, name: tool.name })),
+    missingToolSources,
+    sourceCount: normalizedSources.length,
+  }
+}
+
+function collectUsedTools(page, tools) {
+  const ids = new Set()
+  const handles = new Set()
+  const addValue = (value) => {
+    if (typeof value === 'number') ids.add(String(value))
+    if (typeof value === 'string') handles.add(value.trim().toLowerCase())
+  }
+  for (const value of page.bodyJson?.tools || []) addValue(value)
+  visit(page.bodyJson?.blocks || [], (value, key) => {
+    if (['toolId', 'primaryToolId', 'secondaryToolId'].includes(key)) addValue(value)
+    if (key === 'toolHandle') addValue(value)
+    if (key === 'toolHandles' && Array.isArray(value)) value.forEach(addValue)
+  })
+  for (const value of [page.comparisonPage?.primaryToolId, page.comparisonPage?.secondaryToolId, page.alternativePage?.primaryToolId]) addValue(value)
+  for (const row of [...(page.comparisonTools || []), ...(page.alternativeTools || [])]) addValue(row?.toolId)
+  return tools.filter(tool => ids.has(String(tool.id)) || handles.has(String(tool.handle || '').toLowerCase()))
+}
+
+function sourceMatchesTool(source, tool) {
+  const sourceUrl = normalizeUrl(source?.url)
+  const website = normalizeUrl(tool.website)
+  if (sourceUrl && website && (sourceUrl === website || sourceUrl.startsWith(`${website}/`) || website.startsWith(`${sourceUrl}/`))) return true
+  const text = `${source?.title || ''} ${source?.context || ''}`.toLowerCase()
+  return Boolean(tool.name && text.includes(String(tool.name).toLowerCase()))
+    || Boolean(tool.handle && text.includes(String(tool.handle).toLowerCase()))
+}
+
+function normalizeUrl(value) {
+  try {
+    const url = new URL(String(value || ''))
+    return `${url.protocol}//${url.hostname}${url.pathname.replace(/\/$/, '')}`.toLowerCase()
+  }
+  catch {
+    return String(value || '').trim().replace(/\/$/, '').toLowerCase()
+  }
+}
+
+function dedupeSources(sources) {
+  const rows = new Map()
+  for (const source of sources) {
+    if (!source?.url) continue
+    const key = normalizeUrl(source.url)
+    if (!rows.has(key)) rows.set(key, { ...source })
+  }
+  return Array.from(rows.values())
+}
+
+function calculateScore(checks, family) {
+  const guideWeights = {
+    wordCount: 12,
+    blockCount: 8,
+    faqCount: 8,
+    recommendedToolsCount: 10,
+    toolCalloutCount: 8,
+    criteriaCount: 8,
+    minRecommendedToolWordCount: 10,
+    minFaqAnswerWordCount: 8,
+    requiredTopics: 10,
+    hasMethodology: 5,
+    sourceCount: 5,
+    sourceToolCoverage: 8,
+  }
+  const compareWeights = {
+    wordCount: 15,
+    blockCount: 10,
+    faqCount: 8,
+    matrixRowCount: 15,
+    criteriaCount: 12,
+    verdictSpecific: 10,
+    minFaqAnswerWordCount: 8,
+    requiredTopics: 7,
+    hasMethodology: 5,
+    hasOfficialOrInternalSources: 5,
+    seoTitleValid: 3,
+    metaDescriptionValid: 2,
+  }
+  const weights = family === 'compare' ? compareWeights : guideWeights
+  const total = Object.values(weights).reduce((sum, value) => sum + value, 0)
+  const earned = Object.entries(weights).reduce((sum, [name, weight]) => sum + (checks[name]?.passed ? weight : 0), 0)
+  return Math.round((earned / total) * 100)
 }
 
 function validateToolGrounding(page, sourceData, errors) {
