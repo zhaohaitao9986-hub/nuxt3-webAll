@@ -85,7 +85,8 @@ const BRIEF_FIELDS = [
   'primaryToolId', 'tutorialGoal', 'workflowContext', 'prerequisiteKnowledge', 'outputChecklist', 'commonMistakes',
   'secondaryToolId', 'comparisonIntent', 'targetAudience', 'alternativeToolIds', 'reasonToSwitch',
   'selectionCriteria', 'representativeToolIds', 'relatedToolIds', 'sharedUseCases',
-  'comparisonDimensions', 'internalLinks', 'autoSelectSecondaryTool',
+  'comparisonDimensions', 'featureComparisonFacts', 'pricingComparisonFacts', 'pricingSummary', 'categoryContext',
+  'internalLinks', 'autoSelectSecondaryTool',
 ]
 
 export function promptJsonWithBrief(input, currentPromptJson = null) {
@@ -310,19 +311,15 @@ export async function listContentGenerationTasksByIds(ids = []) {
 }
 
 export async function createContentGenerationTask(input, auth) {
-  const title = String(input.title || '').trim()
-  if (!title) {
-    throw createError({ statusCode: 400, statusMessage: '任务标题必填' })
-  }
-
   const status = normalizeStatus(input.status || 'draft')
   if (!status) {
     throw createError({ statusCode: 400, statusMessage: '任务状态无效' })
   }
   const contentType = toDbContentType(input.contentType || input.content_type)
+  const title = String(input.title || '').trim() || `${contentType} draft`
   const categoryId = normalizeOptionalNumber(input.categoryId ?? input.category_id)
   const promptJson = promptJsonWithBrief(input)
-  validateTaskBrief(contentType, promptJson, categoryId)
+  if (promptJson?.brief && Object.keys(promptJson.brief).length) validateTaskBrief(contentType, promptJson, categoryId)
 
   const created = await prisma.$transaction(async (tx) => {
     const row = await tx.contentGenerationTask.create({
@@ -413,7 +410,7 @@ export async function updateContentGenerationTask(id, input, auth) {
   if (!Object.keys(data).length) {
     return serializeTask(current)
   }
-  if (data.promptJson !== undefined || data.contentType !== undefined || data.categoryId !== undefined) {
+  if ((data.promptJson?.brief && Object.keys(data.promptJson.brief).length) || (data.contentType !== undefined && current.promptJson?.brief)) {
     validateTaskBrief(data.contentType || current.contentType, data.promptJson ?? current.promptJson, data.categoryId ?? current.categoryId)
   }
   if (data.title !== undefined && !data.title) {

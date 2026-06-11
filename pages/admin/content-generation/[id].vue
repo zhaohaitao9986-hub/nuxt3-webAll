@@ -33,6 +33,8 @@ const statusMap = computed(() => Object.fromEntries(
 
 const pageLoading = ref(false)
 const detailSaving = ref(false)
+const briefPreparing = ref(false)
+const briefSummary = ref(null)
 const generationLoading = ref(false)
 const reviewLoading = ref(false)
 const rejectSaving = ref(false)
@@ -68,6 +70,7 @@ const detailRules = {
 }
 
 const phaseLabel = computed(() => CONTENT_GENERATION_PHASE_LABELS[generationPhase.value] || '')
+const briefValidation = computed(() => validateContentGenerationBrief(detailForm))
 
 function statusLabel(status) {
   return contentGenerationStatusLabel(status, statusMap.value)
@@ -167,6 +170,36 @@ async function saveDetail() {
   }
   finally {
     detailSaving.value = false
+  }
+}
+
+async function prepareBrief() {
+  const type = String(detailForm.contentType).toUpperCase()
+  if (['BUYER_GUIDE', 'CATEGORY_GUIDE'].includes(type) && !detailForm.categoryId) {
+    ElMessage.warning('请先选择分类')
+    return
+  }
+  if (['TUTORIAL', 'COMPARISON', 'ALTERNATIVE'].includes(type) && !detailForm.primaryToolId) {
+    ElMessage.warning('请先选择主工具')
+    return
+  }
+  briefPreparing.value = true
+  try {
+    const response = await adminAxios.post(`/api/admin/content-generation/tasks/${taskId.value}/prepare-brief`, {
+      contentType: detailForm.contentType,
+      categoryId: detailForm.categoryId || null,
+      primaryToolId: detailForm.primaryToolId || detailForm.toolId || null,
+      secondaryToolId: detailForm.secondaryToolId || null,
+    })
+    fillContentGenerationDetailForm(detailForm, response.data.task)
+    briefSummary.value = response.data.inputSummary
+    ElMessage.success('Brief 已根据数据库事实自动生成')
+  }
+  catch (e) {
+    ElMessage.error(errorMessage(e, 'Brief 生成失败'))
+  }
+  finally {
+    briefPreparing.value = false
   }
 }
 
@@ -376,7 +409,7 @@ watch(taskId, () => {
         <el-button
           type="success"
           :loading="generationLoading"
-          :disabled="detailSaving"
+          :disabled="detailSaving || briefPreparing || !briefValidation.ok"
           @click="generateTask('generate')"
         >
           生成内容
@@ -384,7 +417,7 @@ watch(taskId, () => {
         <el-button
           type="warning"
           :loading="generationLoading"
-          :disabled="detailSaving"
+          :disabled="detailSaving || briefPreparing || !briefValidation.ok"
           @click="generateTask('regenerate')"
         >
           重新生成
@@ -427,10 +460,22 @@ watch(taskId, () => {
         >
           保存
         </el-button>
+        <el-button type="success" :loading="briefPreparing" :disabled="generationLoading" @click="prepareBrief">
+          AI 生成 Brief
+        </el-button>
       </div>
     </div>
 
     <el-card shadow="never" class="detail-card">
+      <el-alert
+        v-if="briefSummary"
+        :type="briefSummary.contractPassed ? 'success' : 'warning'"
+        :closable="false"
+        show-icon
+        class="mb-4"
+        :title="briefSummary.contractPassed ? 'Brief Contract 已通过' : `Brief 缺少：${briefSummary.missingRequiredFields.join('、')}`"
+        :description="`工具 ${briefSummary.selectedTools.length} 个，来源 ${briefSummary.sourceMapCount} 个，策略：${briefSummary.selectedToolStrategy || '-'}，警告：${briefSummary.inputWarnings.join('、') || '无'}`"
+      />
       <el-form ref="detailFormRef" :model="detailForm" :rules="detailRules" label-width="96px">
         <el-form-item label="任务标题" prop="title">
           <el-input v-model="detailForm.title" :disabled="generationLoading" />

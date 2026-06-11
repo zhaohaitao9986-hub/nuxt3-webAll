@@ -6,7 +6,6 @@ import {
   contentGenerationStatusLabel,
   contentGenerationStatusType,
   createContentGenerationBriefForm,
-  validateContentGenerationBrief,
 } from '~/utils/contentGeneration'
 
 definePageMeta({
@@ -36,6 +35,7 @@ const categoryOptions = ref([])
 
 const createVisible = ref(false)
 const createSaving = ref(false)
+const briefPreparing = ref(false)
 const createFormRef = ref(null)
 const createForm = reactive({
   ...createContentGenerationBriefForm(),
@@ -50,7 +50,6 @@ const createForm = reactive({
 })
 
 const createRules = {
-  title: [{ required: true, message: '请输入任务标题', trigger: 'blur' }],
 }
 
 function statusLabel(status) {
@@ -204,7 +203,14 @@ function openCreate() {
   nextTick(() => createFormRef.value?.clearValidate?.())
 }
 
-async function submitCreate() {
+function validatePrepareSeed() {
+  const type = String(createForm.contentType).toUpperCase()
+  if (['BUYER_GUIDE', 'CATEGORY_GUIDE'].includes(type) && !createForm.categoryId) return '请选择分类'
+  if (['TUTORIAL', 'COMPARISON', 'ALTERNATIVE'].includes(type) && !createForm.primaryToolId) return '请选择主工具'
+  return ''
+}
+
+async function submitCreate(prepareBrief = false) {
   try {
     await createFormRef.value?.validate?.()
   }
@@ -214,10 +220,12 @@ async function submitCreate() {
 
   createSaving.value = true
   try {
-    const briefValidation = validateContentGenerationBrief(createForm)
-    if (!briefValidation.ok) throw new Error(`缺少必要输入：${briefValidation.missing.join('、')}`)
-    const brief = briefValidation.brief
-    await adminAxios.post('/api/admin/content-generation/tasks', {
+    if (prepareBrief) {
+      const seedError = validatePrepareSeed()
+      if (seedError) throw new Error(seedError)
+      briefPreparing.value = true
+    }
+    const response = await adminAxios.post('/api/admin/content-generation/tasks', {
       title: createForm.title.trim(),
       slug: createForm.slug.trim(),
       contentType: createForm.contentType.trim(),
@@ -226,8 +234,20 @@ async function submitCreate() {
       toolId: createForm.primaryToolId || createForm.toolId || null,
       limit: createForm.limit,
       status: createForm.status,
-      promptJson: { brief },
     })
+    if (prepareBrief) {
+      await adminAxios.post(`/api/admin/content-generation/tasks/${response.data.id}/prepare-brief`, {
+        contentType: createForm.contentType,
+        categoryId: createForm.categoryId || null,
+        primaryToolId: createForm.primaryToolId || null,
+        secondaryToolId: createForm.secondaryToolId || null,
+      })
+      ElMessage.success('任务已创建，Brief 已自动生成')
+      createVisible.value = false
+      await loadList()
+      router.push(`/admin/content-generation/${response.data.id}`)
+      return
+    }
     ElMessage.success('已创建')
     createVisible.value = false
     await loadList()
@@ -240,6 +260,7 @@ async function submitCreate() {
   }
   finally {
     createSaving.value = false
+    briefPreparing.value = false
   }
 }
 
@@ -410,8 +431,8 @@ onMounted(() => {
       destroy-on-close
     >
       <el-form ref="createFormRef" :model="createForm" :rules="createRules" label-width="92px">
-        <el-form-item label="任务标题" prop="title">
-          <el-input v-model="createForm.title" placeholder="例如：AI 写作工具 Buyer Guide" />
+        <el-form-item label="任务标题">
+          <el-input v-model="createForm.title" placeholder="可选，未填写时自动生成草稿标题" />
         </el-form-item>
         <el-form-item label="Slug">
           <el-input v-model="createForm.slug" placeholder="ai-writing-tools-buyer-guide" />
@@ -444,7 +465,7 @@ onMounted(() => {
             />
           </el-select>
         </el-form-item>
-        <ContentGenerationBriefFields :form="createForm" />
+        <ContentGenerationBriefFields :form="createForm" compact />
         <el-form-item label="数量">
           <el-input-number v-model="createForm.limit" :min="1" :max="30" style="width: 160px" />
         </el-form-item>
@@ -463,8 +484,11 @@ onMounted(() => {
         <el-button @click="createVisible = false">
           取消
         </el-button>
-        <el-button type="primary" :loading="createSaving" @click="submitCreate">
+        <el-button :loading="createSaving && !briefPreparing" @click="submitCreate(false)">
           创建
+        </el-button>
+        <el-button type="primary" :loading="briefPreparing" @click="submitCreate(true)">
+          AI 生成 Brief
         </el-button>
       </template>
     </el-dialog>
