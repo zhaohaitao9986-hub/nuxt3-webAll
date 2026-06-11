@@ -51,7 +51,7 @@ const TASK_INSTRUCTIONS = {
 }
 
 function guideRulesFor(contentType) {
-  if (contentType === 'BUYER_GUIDE') return contentRules.guides
+  if (contentType === 'BUYER_GUIDE') return contentRules.buyerGuide
   return {
     ...contentRules.guides,
     requirements: contentRules.guides.requirements.filter(rule => !/Recommend at least 5|tool_callout|How to choose|Recommended tools/i.test(rule)),
@@ -67,6 +67,7 @@ export function buildContentPrompt(sourceData) {
 export function buildGuideUserPrompt(sourceData) {
   const source = sourceData.aiInput
   const requiresRecommendations = sourceData.contentType === 'BUYER_GUIDE'
+  const limits = requiresRecommendations ? PRODUCTION_LIMITS.buyerGuide : PRODUCTION_LIMITS.guide
   return [
     `Generate a ${sourceData.contentType} production-ready SEO draft as JSON.`,
     `Prompt version: ${PRODUCTION_PROMPT_VERSION}.`,
@@ -81,15 +82,23 @@ export function buildGuideUserPrompt(sourceData) {
     JSON.stringify(TASK_INSTRUCTIONS[sourceData.contentType], null, 2),
     '',
     'Non-negotiable validation targets:',
-    `- ${PRODUCTION_LIMITS.guide.minWords}-${PRODUCTION_LIMITS.guide.maxWords} English editorial words`,
-    `- ${PRODUCTION_LIMITS.guide.minBlocks}-${PRODUCTION_LIMITS.guide.maxBlocks} body blocks`,
+    `- ${limits.minWords}-${limits.maxWords} English editorial words`,
     requiresRecommendations
-      ? `- at least ${PRODUCTION_LIMITS.guide.minRecommendedTools} distinct tool_callout recommendations`
+      ? `- target ${limits.targetMinBlocks}-${limits.targetMaxBlocks} body blocks; never exceed ${limits.maxBlocks}`
+      : `- ${limits.minBlocks}-${limits.maxBlocks} body blocks`,
+    requiresRecommendations
+      ? `- exactly ${limits.minRecommendedTools} distinct tool_callout recommendations, each ${limits.minToolNoteWords}-${limits.maxToolNoteWords} words`
       : '- tool_callout blocks are optional; do not manufacture recommendations to meet a buyer-guide quota',
-    `- at least ${PRODUCTION_LIMITS.guide.minFaqItems} FAQ items`,
-    `- each section >= ${PRODUCTION_LIMITS.guide.minSectionWords} words`,
-    `- each FAQ answer >= ${PRODUCTION_LIMITS.guide.minFaqAnswerWords} words`,
-    `- each tool_callout verdict >= ${PRODUCTION_LIMITS.guide.minToolNoteWords} words`,
+    `- at least ${limits.minFaqItems} FAQ items`,
+    requiresRecommendations
+      ? `- each section ${limits.minSectionWords}-${limits.maxSectionWords} words`
+      : `- each section >= ${limits.minSectionWords} words`,
+    requiresRecommendations
+      ? `- each FAQ answer ${limits.minFaqAnswerWords}-${limits.maxFaqAnswerWords} words`
+      : `- each FAQ answer >= ${limits.minFaqAnswerWords} words`,
+    requiresRecommendations
+      ? '- feature claims must use exact facts from the matching toolFacts.allowedFeatures; raw description is context, not feature evidence'
+      : '',
     '- contentPage.status = REVIEW and robots = NOINDEX_FOLLOW',
     '- copy sourceData.sources into output sources',
     '',
@@ -214,15 +223,27 @@ export function buildExpandFixPrompt(originalPrompt, rawOutput, validation) {
     .filter(([, check]) => check && check.passed === false && check.expandable !== false)
     .map(([name, check]) => ({ name, actual: check.actual, expected: check.expected }))
 
+  const overBudget = fixableChecks.some(row => (
+    (row.name === 'wordCount' || row.name === 'blockCount')
+    && Number(row.actual) > Number(String(row.expected).split('-').at(-1))
+  ))
+
   return [
     originalPrompt,
     '',
-    'EXPAND/FIX PASS:',
-    'The previous JSON was structurally parseable but failed production depth checks.',
+    'REVISION/FIX PASS:',
+    'The previous JSON was structurally parseable but failed production validation.',
     'Return one complete replacement JSON object. Preserve identifiers, source grounding, output shape, REVIEW status, and NOINDEX_FOLLOW.',
-    'Expand the existing content; do not summarize it, delete valid sections, reduce detail, or switch to a shorter prompt.',
+    overBudget
+      ? 'The draft is over budget. Compress repeated explanations, merge overlapping sections, and remove optional blocks while preserving required topics. Do not add detail.'
+      : 'Add only the detail needed for failed minimum checks. Do not create duplicate sections or repeat explanations.',
+    'Replace forbidden absolute wording with cautious, evidence-based language.',
+    'Rewrite ranking-style FAQ questions as evaluation questions such as "How should I evaluate...", "Which factors matter when...", or "When should I choose...".',
+    'Remove unsupported feature details. A tool feature may appear only when it is grounded in that tool\'s allowedFeatures or other explicit tool facts.',
     'Fix these checks:',
     JSON.stringify(fixableChecks, null, 2),
+    'Validation errors to correct:',
+    JSON.stringify(validation?.errors || [], null, 2),
     '',
     'Previous JSON:',
     rawOutput,

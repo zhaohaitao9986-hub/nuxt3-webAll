@@ -7,7 +7,7 @@ const CONTRACTS = {
     maxTools: 10,
     maxSources: 30,
     minCriteria: 5,
-    sourceSelectionRule: 'Selected tools only; official site plus retained pricing, platform, and high-confidence relevant claim sources. No social sources.',
+    sourceSelectionRule: 'Selected tools only; fact-level website and allowed-feature entries plus retained pricing, platform, and high-confidence relevant claim sources. No social sources.',
   },
   CATEGORY_GUIDE: {
     requiredFields: ['pageType', 'contentType', 'targetKeyword', 'pageGoal', 'searchIntent', 'audience', 'categoryContext', 'relatedCategories', 'representativeTools', 'sourceMap', 'internalLinks'],

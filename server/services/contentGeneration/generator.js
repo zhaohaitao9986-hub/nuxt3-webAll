@@ -50,6 +50,9 @@ function shouldExpand(validation) {
     'hasDecisionGuidance',
     'hasUseCases',
     'hasMethodology',
+    'forbiddenClaims',
+    'faqQuestionStyle',
+    'toolGrounding',
   ])
   return Object.entries(validation.checks || {}).some(([name, row]) => expandable.has(name) && row?.passed === false)
 }

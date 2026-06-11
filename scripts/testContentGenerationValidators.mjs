@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { validateGeneratedContentPage } from '../server/services/contentGeneration/validators.js'
 import { enforceInputContract } from '../server/services/contentGeneration/inputContracts.js'
 import { applyPromptTemplate } from '../server/services/contentGeneration/prompts.js'
+import { buildSourceMap, compactToolFacts } from '../server/services/contentGeneration/sourceSelectors.js'
 import { promptJsonWithBrief } from '../server/services/contentGeneration/taskStore.js'
 import {
   buildContentGenerationBrief,
@@ -32,6 +33,7 @@ function tool(id) {
     features: ['Team workflow', 'Content editing'],
     pros: ['Structured workflow'],
     cons: ['Plan limits require verification'],
+    useCases: ['Editorial workflow'],
   }
 }
 
@@ -79,18 +81,17 @@ const guide = {
     version: 1,
     tools: tools.map(row => row.handle),
     blocks: [
-      { type: 'key_takeaways', items: [words(35), words(35), words(35)] },
-      { type: 'problem_frame', text: words(90, 'The buyer problem') },
-      { type: 'framework', criteria: Array.from({ length: 6 }, (_, index) => ({ name: `Criterion ${index + 1}`, weight: 1, description: words(35) })) },
-      section('Introduction and Who This Is For'),
-      section('How to Choose, Key Criteria, and Pricing Context'),
-      section('Recommended Tools to Consider'),
-      section('Workflow and Implementation Steps'),
-      section('Use Cases and Common Mistakes'),
-      section('Decision Guidance and Final Recommendation'),
-      ...tools.slice(0, 5).map(row => ({ type: 'tool_callout', toolHandle: row.handle, verdict: words(95, row.name) })),
-      { type: 'methodology', text: words(70, 'Methodology based on official sources') },
-      { type: 'faq', items: Array.from({ length: 5 }, (_, index) => ({ question: `How should buyers evaluate factor ${index + 1}?`, answer: words(70) })) },
+      { type: 'key_takeaways', items: [exactWords(70), exactWords(70), exactWords(70)] },
+      { type: 'problem_frame', text: exactWords(150) },
+      { type: 'section', heading: 'Introduction: Who This Guide Is For', level: 2, html: `<p>${exactWords(145)}</p>` },
+      { type: 'framework', criteria: Array.from({ length: 6 }, (_, index) => ({ name: `Criterion ${index + 1}`, weight: 1, description: exactWords(70) })) },
+      ...tools.slice(0, 5).map(row => ({ type: 'tool_callout', toolHandle: row.handle, verdict: exactWords(115) })),
+      { type: 'decision_tree', branches: [{ if: exactWords(35), then: exactWords(55), toolHandles: [tools[0].handle] }] },
+      { type: 'section', heading: 'Workflow and Implementation Steps', level: 2, html: `<p>${exactWords(145)}</p>` },
+      { type: 'section', heading: 'Common Mistakes and Use Cases', level: 2, html: `<p>${exactWords(145)}</p>` },
+      { type: 'section', heading: 'Final Recommendation, Pricing, and How to Choose', level: 2, html: `<p>${exactWords(145)}</p>` },
+      { type: 'methodology', text: `Methodology based on official sources ${exactWords(80)}` },
+      { type: 'faq', items: Array.from({ length: 5 }, (_, index) => ({ question: `How should buyers evaluate factor ${index + 1}?`, answer: exactWords(65) })) },
     ],
   },
   categoryContentPage: { level1Id: 10, level2Id: 20 },
@@ -181,6 +182,38 @@ const riskyValidation = validateGeneratedContentPage(riskyGuide, guideSource)
 assert.equal(riskyValidation.ok, false)
 assert.match(riskyValidation.errors.join('\n'), /High-risk expression/)
 
+const buyerLimits = structuredClone(guide)
+buyerLimits.bodyJson.blocks.find(block => block.type === 'tool_callout').verdict = exactWords(131)
+buyerLimits.bodyJson.blocks.find(block => block.type === 'section').html = `<p>${exactWords(171)}</p>`
+buyerLimits.bodyJson.blocks.find(block => block.type === 'faq').items[0].answer = exactWords(76)
+const buyerLimitsValidation = validateGeneratedContentPage(buyerLimits, guideSource)
+assert.equal(buyerLimitsValidation.ok, false)
+assert.equal(buyerLimitsValidation.checks.minRecommendedToolWordCount.passed, false)
+assert.equal(buyerLimitsValidation.checks.minSectionWordCount.passed, false)
+assert.equal(buyerLimitsValidation.checks.minFaqAnswerWordCount.passed, false)
+
+const absoluteClaims = structuredClone(guide)
+absoluteClaims.bodyJson.blocks[0].items.push('This is the best ever, fully autonomous choice with no editing needed.')
+const absoluteValidation = validateGeneratedContentPage(absoluteClaims, guideSource)
+assert.equal(absoluteValidation.checks.forbiddenClaims.passed, false)
+assert.match(absoluteValidation.errors.join('\n'), /best ever/)
+assert.match(absoluteValidation.errors.join('\n'), /fully autonomous/)
+assert.match(absoluteValidation.errors.join('\n'), /no editing needed/)
+
+const rankingFaq = structuredClone(guide)
+rankingFaq.bodyJson.blocks.find(block => block.type === 'faq').items[0].question = 'Which is the best AI workflow tool?'
+const rankingFaqValidation = validateGeneratedContentPage(rankingFaq, guideSource)
+assert.equal(rankingFaqValidation.checks.faqQuestionStyle.passed, false)
+
+const groundedUseCase = structuredClone(guide)
+groundedUseCase.bodyJson.blocks.find(block => block.type === 'tool_callout').verdict = `${exactWords(105)} Keyword research supports the editorial workflow.`
+groundedUseCase.bodyJson.blocks.find(block => block.type === 'tool_callout').toolHandle = tools[0].handle
+const groundedUseCaseSource = structuredClone(guideSource)
+groundedUseCaseSource.tools[0].useCases = ['Keyword research']
+groundedUseCaseSource.topTools[0].useCases = ['Keyword research']
+const groundedUseCaseValidation = validateGeneratedContentPage(groundedUseCase, groundedUseCaseSource)
+assert.equal(groundedUseCaseValidation.checks.toolGrounding.passed, true)
+
 const categoryGuide = structuredClone(guide)
 categoryGuide.contentPage.type = 'CATEGORY_GUIDE'
 categoryGuide.bodyJson.blocks = categoryGuide.bodyJson.blocks.filter(block => block.type !== 'tool_callout')
@@ -218,6 +251,27 @@ const buyerInput = enforceInputContract('BUYER_GUIDE', {
 assert.equal(buyerInput.validation.passed, true)
 assert.deepEqual(buyerInput.validation.forbiddenFieldsRemoved, ['socialLinks'])
 assert.equal('socialLinks' in buyerInput.input, false)
+
+const factLevelTool = {
+  ...tools[0],
+  feature: ['Keyword research'],
+  pricingPlans: [{ planName: 'Professional', features: ['Team workflow'], source: { id: 11, url: 'https://tool-1.example.com/pricing', sourceType: 'OFFICIAL_PRICING' } }],
+  claims: [{
+    claimType: 'FEATURE',
+    claimText: 'Supports editorial briefs.',
+    status: 'ACTIVE',
+    confidence: 0.9,
+    expiresAt: null,
+    source: { id: 12, url: 'https://tool-1.example.com/features', sourceType: 'OFFICIAL_DOCS' },
+  }],
+}
+const compactFacts = compactToolFacts(factLevelTool)
+const factLevelSources = buildSourceMap([factLevelTool], { includePlatforms: true })
+assert.equal(compactFacts.allowedFeatures.includes('Keyword research'), true)
+assert.equal(factLevelSources.some(row => row.factType === 'official'), true)
+assert.equal(factLevelSources.some(row => row.factType === 'features' && row.supportedFacts.includes('Keyword research')), true)
+assert.equal(factLevelSources.some(row => row.factType === 'pricing'), true)
+assert.equal(factLevelSources.some(row => row.factType === 'claim'), true)
 
 const categoryInput = enforceInputContract('CATEGORY_GUIDE', {
   ...commonGuide,
@@ -312,6 +366,11 @@ console.log(JSON.stringify({
   compareScore: compareValidation.score,
   thinGuideRejected: !thinValidation.ok,
   riskyGuideRejected: !riskyValidation.ok,
+  buyerGuideUpperLimitsRejected: !buyerLimitsValidation.ok,
+  absoluteClaimsRejected: !absoluteValidation.ok,
+  rankingFaqRejected: !rankingFaqValidation.ok,
+  useCaseGroundingAccepted: groundedUseCaseValidation.checks.toolGrounding.passed,
+  factLevelSourceMap: factLevelSources.map(row => row.factType),
   categoryGuideWithoutToolCallouts: categoryGuideValidation.ok,
   unsupportedTypeRejected: !unsupportedValidation.ok,
   inputContracts: {

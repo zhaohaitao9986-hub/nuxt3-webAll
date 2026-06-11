@@ -66,15 +66,48 @@ function check(passed, actual, expected, options = {}) {
     actual,
     expected,
     expandable: options.expandable !== false,
+    severity: options.severity || 'error',
   }
 }
 
+function warning(rule, message, extra = {}) {
+  return {
+    type: 'warning',
+    severity: 'warning',
+    rule,
+    message,
+    ...extra,
+  }
+}
+
+function normalizeWarning(value) {
+  const normalized = isObject(value)
+    ? {
+      type: 'warning',
+      severity: 'warning',
+      rule: value.rule || 'validationWarning',
+      message: value.message || formatValue(value),
+      ...value,
+    }
+    : warning('validationWarning', String(value || 'Validation warning'))
+  Object.defineProperty(normalized, 'startsWith', {
+    enumerable: false,
+    value: prefix => normalized.message.startsWith(prefix),
+  })
+  return normalized
+}
+
 function result(errors, warnings = [], extra = {}) {
+  const normalizedWarnings = warnings.map(normalizeWarning)
   return {
     ok: errors.length === 0,
     passed: errors.length === 0,
     errors,
-    warnings,
+    warnings: normalizedWarnings,
+    issues: [
+      ...errors.map(message => ({ type: 'error', severity: 'error', rule: 'validationError', message })),
+      ...normalizedWarnings,
+    ],
     ...extra,
   }
 }
@@ -178,7 +211,9 @@ export function validateGeneratedContentPage(page, sourceData = null) {
   const pageType = meta?.type
   const isGuide = GUIDE_TYPES.has(pageType)
   const isCompare = COMPARE_TYPES.has(pageType)
-  const limits = isCompare ? PRODUCTION_LIMITS.compare : PRODUCTION_LIMITS.guide
+  const limits = isCompare
+    ? PRODUCTION_LIMITS.compare
+    : pageType === 'BUYER_GUIDE' ? PRODUCTION_LIMITS.buyerGuide : PRODUCTION_LIMITS.guide
 
   validateSchema(page, sourceData, errors)
 
@@ -209,7 +244,14 @@ export function validateGeneratedContentPage(page, sourceData = null) {
       : pageType === 'TUTORIAL'
         ? GUIDE_REQUIRED_TOPICS.filter(topic => !['howToChoose', 'keyCriteria', 'recommendedTools', 'decisionGuidance'].includes(topic.key))
         : GUIDE_REQUIRED_TOPICS
-  const missingTopics = topics.filter(topic => !topic.pattern.test(fullBodyText)).map(topic => topic.key)
+  const semanticTopicCoverage = {
+    keyCriteria: blocks.some(block => block?.type === 'framework' && (block.criteria?.length || 0) > 0),
+    recommendedTools: toolCallouts.length >= (limits.minRecommendedTools || 1),
+    decisionGuidance: blocks.some(block => block?.type === 'decision_tree' && (block.branches?.length || 0) > 0),
+  }
+  const missingTopics = topics
+    .filter(topic => !topic.pattern.test(fullBodyText) && !semanticTopicCoverage[topic.key])
+    .map(topic => topic.key)
   const hasMethodology = blocks.some(block => block?.type === 'methodology' && countEnglishWords(block.text || '') >= 40)
   const hasPricingContext = /pricing|paid tier|free tier|trial|billing|plan|official pricing|verify current pricing/i.test(fullBodyText)
   const hasDecisionGuidance = /decision|choose|right fit|suitable for|recommendation|bottom line/i.test(fullBodyText)
@@ -225,16 +267,26 @@ export function validateGeneratedContentPage(page, sourceData = null) {
   checks.wordCount = check(wordCount >= limits.minWords && wordCount <= limits.maxWords, wordCount, `${limits.minWords}-${limits.maxWords}`)
   checks.blockCount = check(blocks.length >= limits.minBlocks && blocks.length <= limits.maxBlocks, blocks.length, `${limits.minBlocks}-${limits.maxBlocks}`)
   checks.faqCount = check(faqItems.length >= limits.minFaqItems, faqItems.length, `>= ${limits.minFaqItems}`)
-  checks.minSectionWordCount = check(
-    sectionWordCounts.length > 0 && sectionWordCounts.every(row => row.words >= limits.minSectionWords),
-    sectionWordCounts,
-    `every section >= ${limits.minSectionWords} words`,
-  )
-  checks.minFaqAnswerWordCount = check(
-    faqAnswerWordCounts.length >= limits.minFaqItems && faqAnswerWordCounts.every(row => row.words >= limits.minFaqAnswerWords),
-    faqAnswerWordCounts,
-    `every FAQ answer >= ${limits.minFaqAnswerWords} words`,
-  )
+  checks.minSectionWordCount = buildLengthRangeCheck({
+    rows: sectionWordCounts,
+    minimumCount: 1,
+    recommendedMin: limits.minSectionWords,
+    recommendedMax: limits.maxSectionWords,
+    allowedMax: pageType === 'BUYER_GUIDE' ? 220 : limits.maxSectionWords,
+    rule: 'sectionWordCount',
+    label: 'Section',
+    warnings,
+  })
+  checks.minFaqAnswerWordCount = buildLengthRangeCheck({
+    rows: faqAnswerWordCounts,
+    minimumCount: limits.minFaqItems,
+    recommendedMin: limits.minFaqAnswerWords,
+    recommendedMax: limits.maxFaqAnswerWords,
+    allowedMax: pageType === 'BUYER_GUIDE' ? 125 : limits.maxFaqAnswerWords,
+    rule: 'faqAnswerWordCount',
+    label: 'FAQ answer',
+    warnings,
+  })
   if (pageType === 'BUYER_GUIDE' || isCompare) checks.hasPricingContext = check(hasPricingContext, hasPricingContext, true)
   checks.hasDecisionGuidance = check(hasDecisionGuidance && !missingTopics.includes('decisionGuidance'), hasDecisionGuidance, true)
   checks.hasUseCases = check(hasUseCases && !missingTopics.includes('useCases'), hasUseCases, true)
@@ -255,12 +307,16 @@ export function validateGeneratedContentPage(page, sourceData = null) {
   checks.requiredTopics = check(missingTopics.length === 0, { missing: missingTopics }, 'all required topics')
 
   if (pageType === 'BUYER_GUIDE') {
-    checks.recommendedToolsCount = check(recommendedHandles.size >= limits.minRecommendedTools, recommendedHandles.size, `>= ${limits.minRecommendedTools}`)
-    checks.toolCalloutCount = check(toolCallouts.length >= limits.minRecommendedTools, toolCallouts.length, `>= ${limits.minRecommendedTools}`)
+    checks.recommendedToolsCount = check(recommendedHandles.size === limits.minRecommendedTools, recommendedHandles.size, `= ${limits.minRecommendedTools}`)
+    checks.toolCalloutCount = check(toolCallouts.length === limits.minRecommendedTools, toolCallouts.length, `= ${limits.minRecommendedTools}`)
     checks.minRecommendedToolWordCount = check(
-      toolNoteWordCounts.length >= limits.minRecommendedTools && toolNoteWordCounts.every(row => row.words >= limits.minToolNoteWords),
+      toolNoteWordCounts.length >= limits.minRecommendedTools && toolNoteWordCounts.every(row => (
+        row.words >= limits.minToolNoteWords && (!limits.maxToolNoteWords || row.words <= limits.maxToolNoteWords)
+      )),
       toolNoteWordCounts,
-      `at least ${limits.minRecommendedTools} notes; each >= ${limits.minToolNoteWords} words`,
+      limits.maxToolNoteWords
+        ? `at least ${limits.minRecommendedTools} notes; each ${limits.minToolNoteWords}-${limits.maxToolNoteWords} words`
+        : `at least ${limits.minRecommendedTools} notes; each >= ${limits.minToolNoteWords} words`,
     )
     checks.criteriaCount = check(extractGuideCriteria(blocks).length >= limits.minCriteria, extractGuideCriteria(blocks).length, `>= ${limits.minCriteria}`)
     checks.sourceCount = check(
@@ -287,28 +343,39 @@ export function validateGeneratedContentPage(page, sourceData = null) {
   }
 
   for (const [name, row] of Object.entries(checks)) {
-    if (!row.passed) errors.push(`${name} failed: expected ${formatValue(row.expected)}, got ${formatValue(row.actual)}`)
+    if (!row.passed && row.severity !== 'warning') {
+      errors.push(`${name} failed: expected ${formatValue(row.expected)}, got ${formatValue(row.actual)}`)
+    }
   }
 
   const requiredBlockTypes = isCompare
     ? COMPARE_REQUIRED_BLOCK_TYPES
     : pageType === 'BUYER_GUIDE' ? GUIDE_REQUIRED_BLOCK_TYPES : GUIDE_REQUIRED_BLOCK_TYPES.filter(type => type !== 'tool_callout')
   validateRequiredBlockTypes(blocks, requiredBlockTypes, errors)
-  validateForbiddenClaims(page, errors)
+  const forbiddenClaims = validateForbiddenClaims(page, errors)
   validateHighRiskExpressions(page, errors, warnings)
-  validateFaqQuestions(faqItems, errors)
+  const rankingFaqQuestions = validateFaqQuestions(faqItems, errors)
   if (sourceData) validateAgainstSource(page, sourceData, errors, warnings)
-  if (sourceData) validateToolGrounding(page, sourceData, errors)
+  const groundingErrors = sourceData ? validateToolGrounding(page, sourceData, errors) : []
+  checks.forbiddenClaims = check(forbiddenClaims.length === 0, forbiddenClaims, 'no forbidden absolute claims')
+  checks.faqQuestionStyle = check(rankingFaqQuestions.length === 0, rankingFaqQuestions, 'evaluation-style FAQ questions')
+  checks.toolGrounding = check(groundingErrors.length === 0, groundingErrors, 'all tool claims grounded in supplied tool facts')
 
   const score = calculateScore(checks, isCompare ? 'compare' : 'guide')
   checks.productionScore = check(score >= 85, score, '>= 85')
   if (!checks.productionScore.passed) errors.push(`productionScore failed: expected >= 85, got ${score}`)
-  const failedChecks = Object.entries(checks).filter(([, row]) => !row.passed).map(([name]) => name)
+  const failedChecks = Object.entries(checks)
+    .filter(([, row]) => !row.passed && row.severity !== 'warning')
+    .map(([name]) => name)
+  const warningChecks = Object.entries(checks)
+    .filter(([, row]) => !row.passed && row.severity === 'warning')
+    .map(([name]) => name)
 
   return result(errors, warnings, {
     checks,
     score,
     failedChecks,
+    warningChecks,
     metrics: {
       wordCount,
       blockCount: blocks.length,
@@ -461,6 +528,45 @@ function extractGuideCriteria(blocks) {
   return blocks.filter(block => block?.type === 'framework').flatMap(block => Array.isArray(block.criteria) ? block.criteria : [])
 }
 
+function buildLengthRangeCheck({
+  rows,
+  minimumCount,
+  recommendedMin,
+  recommendedMax,
+  allowedMax,
+  rule,
+  label,
+  warnings,
+}) {
+  const hasRecommendedMaximum = Number.isFinite(recommendedMax)
+  const hardMaximum = Number.isFinite(allowedMax) ? allowedMax : recommendedMax
+  const hardFailures = rows.filter(row => (
+    row.words < recommendedMin || (Number.isFinite(hardMaximum) && row.words > hardMaximum)
+  ))
+  const softOverages = hasRecommendedMaximum
+    ? rows.filter(row => row.words > recommendedMax && (!Number.isFinite(hardMaximum) || row.words <= hardMaximum))
+    : []
+  const hasEnoughRows = rows.length >= minimumCount
+
+  for (const row of softOverages) {
+    warnings.push(warning(rule, `${label} exceeds recommended length (${row.words} words)`, {
+      index: row.index,
+      heading: row.heading || undefined,
+      actual: row.words,
+      recommendedRange: `${recommendedMin}-${recommendedMax}`,
+      allowedRange: `${recommendedMin}-${hardMaximum}`,
+    }))
+  }
+
+  const expected = Number.isFinite(hardMaximum)
+    ? `every ${label.toLowerCase()} allowed ${recommendedMin}-${hardMaximum} words; recommended ${recommendedMin}-${recommendedMax}`
+    : `every ${label.toLowerCase()} >= ${recommendedMin} words`
+
+  if (!hasEnoughRows || hardFailures.length) return check(false, rows, expected)
+  if (softOverages.length) return check(false, rows, expected, { severity: 'warning' })
+  return check(true, rows, expected)
+}
+
 function validateRequiredBlockTypes(blocks, requiredTypes, errors) {
   for (const type of requiredTypes) {
     if (!blocks.some(block => block?.type === type)) errors.push(`bodyJson.blocks must include ${type}`)
@@ -471,11 +577,16 @@ function validateForbiddenClaims(page, errors) {
   const text = []
   collectStrings(page, text)
   const haystack = text.join('\n')
+  const matches = []
   for (const claim of FORBIDDEN_CLAIM_PATTERNS) {
-    if (claim.pattern.test(haystack)) errors.push(`Forbidden absolute claim found: ${claim.label}`)
+    if (claim.pattern.test(haystack)) {
+      matches.push(claim.label)
+      errors.push(`Forbidden absolute claim found: ${claim.label}`)
+    }
   }
   if (/\$\s*[\d,]+(?:\.\d{1,2})?/.test(haystack)) errors.push('Editorial text must not contain dollar amounts')
   if (/<script\b|<iframe\b|\son\w+\s*=/i.test(haystack)) errors.push('Unsafe HTML is not allowed')
+  return matches
 }
 
 function validateHighRiskExpressions(page, errors, warnings) {
@@ -485,17 +596,24 @@ function validateHighRiskExpressions(page, errors, warnings) {
   for (const risk of HIGH_RISK_EXPRESSION_PATTERNS) {
     if (risk.pattern.test(haystack)) {
       errors.push(`High-risk expression found: ${risk.label}`)
-      warnings.push(`Replace "${risk.label}" with readability, natural-draft, human-review, or claim-verification language`)
+      warnings.push(warning(
+        'highRiskExpression',
+        `Replace "${risk.label}" with readability, natural-draft, human-review, or claim-verification language`,
+        { expression: risk.label },
+      ))
     }
   }
 }
 
 function validateFaqQuestions(items, errors) {
+  const matches = []
   items.forEach((item, index) => {
     if (FAQ_RANKING_QUESTION_PATTERN.test(String(item?.question || ''))) {
+      matches.push(index + 1)
       errors.push(`FAQ question ${index + 1} uses ranking language; use an evaluation-style question`)
     }
   })
+  return matches
 }
 
 function validateAgainstSource(page, sourceData, errors, warnings) {
@@ -512,7 +630,7 @@ function validateAgainstSource(page, sourceData, errors, warnings) {
     if (ref.type === 'handle' && !allowedHandles.has(ref.value)) errors.push(`Generated content references tool handle not in sourceData: ${ref.value}`)
   })
   if (sourceData.sources?.length && !page.sources?.length) errors.push('sources must copy sourceData.sources')
-  if (!page.sources?.length) warnings.push('sources array is empty')
+  if (!page.sources?.length) warnings.push(warning('sourceCoverage', 'sources array is empty'))
   if (GUIDE_TYPES.has(page.contentPage?.type)) {
     for (const field of ['metaTitle', 'metaDescription']) {
       const text = String(page.contentPage?.[field] || '').toLowerCase()
@@ -550,7 +668,9 @@ function validateSourceConsistency(page, sourceData, errors, warnings) {
 
   for (const source of page.sources || []) {
     if (!used.some(tool => sourceMatchesTool(source, tool))) {
-      warnings.push(`Unused source: ${source.url || source.title || 'unknown source'}`)
+      warnings.push(warning('unusedSource', `Unused source: ${source.url || source.title || 'unknown source'}`, {
+        url: source.url || null,
+      }))
     }
   }
 
@@ -648,6 +768,7 @@ function calculateScore(checks, family) {
 }
 
 function validateToolGrounding(page, sourceData, errors) {
+  const groundingErrors = []
   const tools = uniqueTools(sourceData)
   const blocks = page.bodyJson?.blocks || []
   for (const block of blocks) {
@@ -660,15 +781,19 @@ function validateToolGrounding(page, sourceData, errors) {
     if (!(tool.pricingPlans?.length || tool.pricing?.length)) {
       for (const pattern of PRICING_DETAIL_PATTERNS) {
         const match = text.match(pattern)?.[0]
-        if (match && !corpus.includes(match.toLowerCase())) {
-          errors.push(`tool_callout for ${handle} contains unsupported pricing detail: ${match}`)
+        if (match && !corpus.includes(normalizeGroundingText(match))) {
+          const message = `tool_callout for ${handle} contains unsupported pricing detail: ${match}`
+          groundingErrors.push(message)
+          errors.push(message)
         }
       }
     }
     for (const pattern of FEATURE_ASSERTION_PATTERNS) {
       const match = text.match(pattern)?.[0]
-      if (match && !corpus.includes(match.toLowerCase())) {
-        errors.push(`tool_callout for ${handle} contains unsupported feature claim: ${match}`)
+      if (match && !corpus.includes(normalizeGroundingText(match))) {
+        const message = `tool_callout for ${handle} contains unsupported feature claim: ${match}`
+        groundingErrors.push(message)
+        errors.push(message)
       }
     }
   }
@@ -676,22 +801,44 @@ function validateToolGrounding(page, sourceData, errors) {
   const methodology = blocks.find(block => block?.type === 'methodology')
   const methodologyText = String(methodology?.text || '')
   const hasRetrievedAt = [...(sourceData.sources || []), ...(page.sources || [])].some(source => source?.retrievedAt)
+  const hasInternalTestEvidence = [...(sourceData.sources || []), ...(page.sources || [])].some(source => (
+    /INTERNAL.*TEST|TEST.*INTERNAL/i.test(String(source?.sourceType || ''))
+    || /internal (?:test|testing|evaluation) evidence/i.test(`${source?.title || ''} ${source?.context || ''}`)
+  ))
   if (/\bas of (?:the )?(?:retrieval date|date of retrieval|our retrieval)\b/i.test(methodologyText) && !hasRetrievedAt) {
     errors.push('methodology must not reference retrieval date when sources have no retrievedAt value')
   }
-  if (/\b(?:we tested|hands-on|in our testing)\b/i.test(methodologyText)) {
+  const claimsHandsOnTesting = [
+    /\bwe tested\b/i,
+    /\bwe evaluated through hands-on testing\b/i,
+    /\bwe personally used\b/i,
+    /\bour testing found\b/i,
+  ].some(pattern => pattern.test(methodologyText))
+  if (claimsHandsOnTesting && !hasInternalTestEvidence) {
     errors.push('methodology must not claim hands-on testing without explicit internal test evidence')
   }
+  return groundingErrors
 }
 
 function buildToolCorpus(tool) {
-  const chunks = [tool.description, tool.whatIsSummary, ...(tool.features || []), ...(tool.pros || []), ...(tool.cons || [])]
+  const chunks = [
+    tool.whatIsSummary,
+    ...(tool.allowedFeatures || []),
+    ...(tool.features || []),
+    ...(tool.useCases || []),
+    ...(tool.pros || []),
+    ...(tool.cons || []),
+  ]
   for (const claim of tool.claims || []) chunks.push(claim.claimText)
   for (const plan of tool.pricingPlans || []) {
     chunks.push(plan.planName, plan.rawText, ...(plan.features || []))
   }
   chunks.push(...(tool.pricing || []))
-  return chunks.filter(Boolean).join('\n').toLowerCase()
+  return normalizeGroundingText(chunks.filter(Boolean).join('\n'))
+}
+
+function normalizeGroundingText(value) {
+  return String(value || '').toLowerCase().replace(/\+/g, '').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
 function uniqueTools(sourceData) {

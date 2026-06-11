@@ -61,6 +61,17 @@ function compactPlan(plan, includeDetails) {
   }
 }
 
+function allowedFeatureFacts(tool, claims = [], plans = []) {
+  return [
+    ...values(tool.feature || tool.features, 10, 240),
+    ...values(tool.useCases, 8, 240),
+    ...values(tool.pros, 6, 240),
+    text(tool.whatIsSummary, 600),
+    ...claims.map(claim => text(claim.claimText, 400)),
+    ...plans.flatMap(plan => values(plan.features, 6, 180)),
+  ].filter(Boolean).filter((value, index, rows) => rows.indexOf(value) === index).slice(0, 30)
+}
+
 export function compactToolFacts(tool, options = {}) {
   const includePricing = options.includePricing !== false
   const includeClaims = options.includeClaims !== false
@@ -69,6 +80,7 @@ export function compactToolFacts(tool, options = {}) {
   const claims = includeClaims
     ? (tool.claims || []).filter(claim => claimIsUsable(claim, relevanceTerms)).slice(0, options.maxClaims || 6)
     : []
+  const plans = includePricing ? (tool.pricingPlans || []).slice(0, options.maxPlans || 4) : []
 
   return {
     id: tool.id,
@@ -78,13 +90,14 @@ export function compactToolFacts(tool, options = {}) {
     description: text(tool.description, options.descriptionMax || 600) || null,
     whatIsSummary: text(tool.whatIsSummary, options.descriptionMax || 600) || null,
     features: values(tool.feature || tool.features, options.maxFeatures || 10),
+    allowedFeatures: allowedFeatureFacts(tool, claims, plans),
     pros: values(tool.pros, options.maxPros || 6),
     cons: values(tool.cons, options.maxCons || 6),
     useCases: values(tool.useCases, options.maxUseCases || 8),
     platforms: (tool.platforms || []).map(item => typeof item === 'string' ? item : item.platform).filter(Boolean).slice(0, 8),
     pricingSummary: includePricing ? values(tool.pricing, 5, 400) : [],
     pricingPlans: includePricing
-      ? (tool.pricingPlans || []).map(plan => compactPlan(plan, includeDetails)).filter(Boolean).slice(0, options.maxPlans || 4)
+      ? plans.map(plan => compactPlan(plan, includeDetails)).filter(Boolean)
       : [],
     keyClaims: claims.map(claim => ({
       claimType: claim.claimType,
@@ -124,14 +137,27 @@ export function buildSourceMap(tools, options = {}) {
 
   for (const tool of tools) {
     push(sourceRow({ url: tool.website, title: tool.name, sourceType: 'OFFICIAL_SITE' }, `Official website for ${tool.name}`, tool.id, 'official', 'website'))
+    const usableClaims = options.includeClaims === false
+      ? []
+      : (tool.claims || []).filter(claim => claimIsUsable(claim, options.relevanceTerms || [])).slice(0, options.maxClaims || 6)
+    const retainedPlans = options.includePricing === false ? [] : (tool.pricingPlans || []).slice(0, options.maxPlans || 4)
+    const allowedFeatures = allowedFeatureFacts(tool, usableClaims, retainedPlans)
+    if (allowedFeatures.length && tool.website) {
+      push({
+        ...sourceRow({ url: tool.website, title: `${tool.name} features`, sourceType: 'OFFICIAL_SITE' }, `Allowed feature facts for ${tool.name}`, tool.id, 'features', 'allowedFeatures'),
+        supportedFacts: allowedFeatures,
+      })
+    }
     if (options.includePricing !== false) {
-      for (const plan of (tool.pricingPlans || []).slice(0, options.maxPlans || 4)) {
+      for (const plan of retainedPlans) {
         push(sourceRow(plan.source, `Pricing evidence for ${tool.name}`, tool.id, 'pricing', plan.planName || 'pricing'))
       }
     }
     if (options.includeClaims !== false) {
-      const claims = (tool.claims || []).filter(claim => claimIsUsable(claim, options.relevanceTerms || [])).slice(0, options.maxClaims || 6)
-      for (const claim of claims) push(sourceRow(claim.source, `Claim evidence for ${tool.name}`, tool.id, 'claim', claim.claimType))
+      for (const claim of usableClaims) push({
+        ...sourceRow(claim.source, `Claim evidence for ${tool.name}`, tool.id, 'claim', claim.claimType),
+        supportedFacts: [text(claim.claimText, 400)],
+      })
     }
     if (options.includePlatforms) {
       for (const platform of (tool.platforms || []).slice(0, 6)) {

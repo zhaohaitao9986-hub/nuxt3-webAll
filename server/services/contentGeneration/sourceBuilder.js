@@ -56,6 +56,7 @@ function mapToolForValidation(tool, options = {}) {
     ? []
     : (tool.claims || []).filter(claim => claimIsUsable(claim, relevanceTerms)).slice(0, options.maxClaims || 6)
   const pricingPlans = options.includePricing === false ? [] : (tool.pricingPlans || []).slice(0, options.maxPlans || 4)
+  const compactFacts = compactToolFacts(tool, options)
   return {
     id: tool.id,
     handle: tool.handle,
@@ -90,6 +91,7 @@ function mapToolForValidation(tool, options = {}) {
     pros: tool.pros || [],
     cons: tool.cons || [],
     features: tool.feature || [],
+    allowedFeatures: compactFacts.allowedFeatures,
     rating: toNumber(tool.toolInfoReview),
     monthlyVisits: toNumber(tool.monthVisitedCount) || 0,
     whatIsSummary: tool.whatIsSummary,

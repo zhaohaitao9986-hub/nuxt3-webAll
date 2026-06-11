@@ -33,7 +33,9 @@ async function ensureDefaultPromptVersion(sourceData) {
         max_tokens: PRODUCTION_MAX_TOKENS,
         generationMode: GENERATION_MODE,
       },
-      rulesJson: sourceData.task === 'generate_compare' ? contentRules.compare : contentRules.guides,
+      rulesJson: sourceData.task === 'generate_compare'
+        ? contentRules.compare
+        : sourceData.contentType === 'BUYER_GUIDE' ? contentRules.buyerGuide : contentRules.guides,
       isActive: true,
     },
     update: { isActive: true },
@@ -46,6 +48,7 @@ export async function resolvePromptVersion(task, sourceData, sourcePrompt) {
     row = await prisma.contentGenerationPromptVersion.findUnique({
       where: { id: Number(task.promptVersionId) },
     })
+    if (row && row.version < PRODUCTION_PROMPT_VERSION) row = null
   }
   if (!row) row = await ensureDefaultPromptVersion(sourceData)
 
