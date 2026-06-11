@@ -1,12 +1,15 @@
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
+import ContentGenerationBriefFields from '~/components/contentGeneration/ContentGenerationBriefFields.vue'
 import {
   CONTENT_GENERATION_PHASE_LABELS,
   CONTENT_GENERATION_STATUS_OPTIONS,
   contentGenerationStatusLabel,
   contentGenerationStatusType,
+  createContentGenerationBriefForm,
   fillContentGenerationDetailForm,
   parseContentJsonText,
+  validateContentGenerationBrief,
 } from '~/utils/contentGeneration'
 
 definePageMeta({
@@ -36,10 +39,10 @@ const rejectSaving = ref(false)
 const generationPhase = ref('')
 
 const categoryOptions = ref([])
-const toolOptions = ref([])
 const detailFormRef = ref(null)
 
 const detailForm = reactive({
+  ...createContentGenerationBriefForm(),
   title: '',
   slug: '',
   contentType: '',
@@ -83,16 +86,13 @@ function errorMessage(error, fallback) {
 
 async function loadOptions() {
   try {
-    const [categoriesRes, toolsRes] = await Promise.all([
+    const [categoriesRes] = await Promise.all([
       adminAxios.get('/api/admin/categories/options'),
-      adminAxios.get('/api/admin/tools', { params: { page: 1, pageSize: 100, toolStatus: 'ACTIVE' } }),
     ])
     categoryOptions.value = categoriesRes.data?.data || []
-    toolOptions.value = toolsRes.data?.data || []
   }
   catch {
     categoryOptions.value = []
-    toolOptions.value = []
   }
 }
 
@@ -127,14 +127,17 @@ async function saveDetail() {
 
   let payload
   try {
+    const briefValidation = validateContentGenerationBrief(detailForm)
+    if (!briefValidation.ok) throw new Error(`缺少必要输入：${briefValidation.missing.join('、')}`)
     payload = {
       title: detailForm.title.trim(),
       slug: detailForm.slug.trim(),
       contentType: detailForm.contentType.trim(),
       targetType: detailForm.targetType.trim(),
       categoryId: detailForm.categoryId || null,
-      toolId: detailForm.toolId || null,
+      toolId: detailForm.primaryToolId || detailForm.toolId || null,
       limit: detailForm.limit,
+      promptJson: { brief: briefValidation.brief },
       contentJson: parseContentJsonText(detailForm.contentJsonText, '内容 JSON'),
       finalContent: parseContentJsonText(detailForm.contentJsonText, '最终内容 JSON'),
       sourceDataJson: parseContentJsonText(detailForm.sourceDataJsonText, '来源 JSON'),
@@ -441,7 +444,7 @@ watch(taskId, () => {
         <el-form-item label="目标类型">
           <el-input v-model="detailForm.targetType" :disabled="generationLoading" />
         </el-form-item>
-        <el-form-item label="分类">
+        <el-form-item label="分类" :required="String(detailForm.contentType).toUpperCase() === 'CATEGORY_GUIDE'">
           <el-select
             v-model="detailForm.categoryId"
             clearable
@@ -458,23 +461,7 @@ watch(taskId, () => {
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="工具">
-          <el-select
-            v-model="detailForm.toolId"
-            clearable
-            filterable
-            placeholder="可选，指定主工具"
-            style="width: 100%"
-            :disabled="generationLoading"
-          >
-            <el-option
-              v-for="tool in toolOptions"
-              :key="tool.id"
-              :label="tool.name"
-              :value="tool.id"
-            />
-          </el-select>
-        </el-form-item>
+        <ContentGenerationBriefFields :form="detailForm" :disabled="generationLoading" />
         <el-form-item label="数量">
           <el-input-number
             v-model="detailForm.limit"

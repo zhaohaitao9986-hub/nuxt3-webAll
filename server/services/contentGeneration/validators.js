@@ -10,6 +10,7 @@ import {
   PRODUCTION_LIMITS,
 } from './editorialRules.js'
 import { responseShapeForContentType } from './responseSchemas.js'
+import { validateInputContractPayload } from './inputContracts.js'
 
 const GUIDE_TYPES = new Set(['BUYER_GUIDE', 'CATEGORY_GUIDE', 'TUTORIAL'])
 const COMPARE_TYPES = new Set(['COMPARISON', 'ALTERNATIVE'])
@@ -87,8 +88,28 @@ export function validateSourceData(data) {
   return data?.task === 'generate_compare' ? validateCompareSourceData(data) : validateGuideSourceData(data)
 }
 
+function validateInputContract(data, errors, warnings) {
+  const validation = data?.aiInput ? validateInputContractPayload(data.aiInput) : {
+    inputContractType: data?.contentType || null,
+    selectedTools: [],
+    missingRequiredFields: ['aiInput'],
+    forbiddenFieldsRemoved: [],
+    sourceMapCount: 0,
+    inputWarnings: [],
+    passed: false,
+  }
+  const merged = { ...validation, ...(data?.inputValidation || {}) }
+  for (const field of merged.missingRequiredFields || []) {
+    errors.push(field === 'missingSecondaryTool' ? 'missingSecondaryTool' : `inputContract missing required field: ${field}`)
+  }
+  warnings.push(...(merged.inputWarnings || []))
+  if (!merged.passed && !(merged.missingRequiredFields || []).length) errors.push('inputContract validation failed')
+  return merged
+}
+
 export function validateGuideSourceData(data) {
   const errors = []
+  const warnings = []
   if (data.task !== 'generate_guide') errors.push('task must be generate_guide')
   if (!GUIDE_TYPES.has(data.contentType)) errors.push('contentType must be a guide-compatible type')
   if (!isSlug(data.slug)) errors.push('slug must be lowercase kebab-case')
@@ -99,14 +120,20 @@ export function validateGuideSourceData(data) {
     errors.push(`BUYER_GUIDE requires at least ${PRODUCTION_LIMITS.guide.minRecommendedTools} source tools`)
   }
   if (data.contentType === 'BUYER_GUIDE' && !data.category?.level2?.id) errors.push('BUYER_GUIDE requires category.level2')
-  if (data.contentType === 'TUTORIAL' && !data.primaryTool && !data.category?.level2) {
-    errors.push('TUTORIAL requires a primaryTool or level2 category')
+  if (data.contentType === 'TUTORIAL' && !data.primaryTool) {
+    errors.push('TUTORIAL requires a primaryTool')
   }
-  return result(errors, [], { missingToolFields: collectMissingToolFields(data.tools || []) })
+  const inputContract = validateInputContract(data, errors, warnings)
+  return result(errors, warnings, {
+    missingToolFields: collectMissingToolFields(data.tools || []),
+    inputContract,
+    ...inputContract,
+  })
 }
 
 export function validateCompareSourceData(data) {
   const errors = []
+  const warnings = []
   if (data.task !== 'generate_compare') errors.push('task must be generate_compare')
   if (!COMPARE_TYPES.has(data.contentType)) errors.push('contentType must be COMPARISON or ALTERNATIVE')
   if (!isSlug(data.slug)) errors.push('slug must be lowercase kebab-case')
@@ -114,10 +141,15 @@ export function validateCompareSourceData(data) {
   if (!Array.isArray(data.tools)) errors.push('tools must be an array')
   if (!Array.isArray(data.sources)) errors.push('sources must be an array')
   if (!data.primaryTool) errors.push('primaryTool is required')
-  if (data.comparisonType === 'TOOL_VS_TOOL' && (!data.primaryTool || !data.secondaryTool)) {
-    errors.push('TOOL_VS_TOOL requires primaryTool and secondaryTool')
+  if (data.contentType === 'COMPARISON' && !data.secondaryTool) {
+    errors.push('missingSecondaryTool')
   }
-  return result(errors, [], { missingToolFields: collectMissingToolFields(data.tools || []) })
+  const inputContract = validateInputContract(data, errors, warnings)
+  return result(errors, warnings, {
+    missingToolFields: collectMissingToolFields(data.tools || []),
+    inputContract,
+    ...inputContract,
+  })
 }
 
 export function collectMissingToolFields(tools) {
@@ -170,7 +202,13 @@ export function validateGeneratedContentPage(page, sourceData = null) {
   }))
   const headingsText = blocks.map(block => `${block?.heading || ''} ${block?.title || ''} ${block?.type || ''}`).join('\n')
   const fullBodyText = `${headingsText}\n${editorialText}`
-  const topics = isCompare ? COMPARE_REQUIRED_TOPICS : GUIDE_REQUIRED_TOPICS
+  const topics = isCompare
+    ? COMPARE_REQUIRED_TOPICS
+    : pageType === 'CATEGORY_GUIDE'
+      ? GUIDE_REQUIRED_TOPICS.filter(topic => !['recommendedTools', 'workflow'].includes(topic.key))
+      : pageType === 'TUTORIAL'
+        ? GUIDE_REQUIRED_TOPICS.filter(topic => !['howToChoose', 'keyCriteria', 'recommendedTools', 'decisionGuidance'].includes(topic.key))
+        : GUIDE_REQUIRED_TOPICS
   const missingTopics = topics.filter(topic => !topic.pattern.test(fullBodyText)).map(topic => topic.key)
   const hasMethodology = blocks.some(block => block?.type === 'methodology' && countEnglishWords(block.text || '') >= 40)
   const hasPricingContext = /pricing|paid tier|free tier|trial|billing|plan|official pricing|verify current pricing/i.test(fullBodyText)
@@ -197,7 +235,7 @@ export function validateGeneratedContentPage(page, sourceData = null) {
     faqAnswerWordCounts,
     `every FAQ answer >= ${limits.minFaqAnswerWords} words`,
   )
-  checks.hasPricingContext = check(hasPricingContext, hasPricingContext, true)
+  if (pageType === 'BUYER_GUIDE' || isCompare) checks.hasPricingContext = check(hasPricingContext, hasPricingContext, true)
   checks.hasDecisionGuidance = check(hasDecisionGuidance && !missingTopics.includes('decisionGuidance'), hasDecisionGuidance, true)
   checks.hasUseCases = check(hasUseCases && !missingTopics.includes('useCases'), hasUseCases, true)
   checks.hasMethodology = check(hasMethodology, hasMethodology, true)
@@ -216,7 +254,7 @@ export function validateGeneratedContentPage(page, sourceData = null) {
   )
   checks.requiredTopics = check(missingTopics.length === 0, { missing: missingTopics }, 'all required topics')
 
-  if (isGuide) {
+  if (pageType === 'BUYER_GUIDE') {
     checks.recommendedToolsCount = check(recommendedHandles.size >= limits.minRecommendedTools, recommendedHandles.size, `>= ${limits.minRecommendedTools}`)
     checks.toolCalloutCount = check(toolCallouts.length >= limits.minRecommendedTools, toolCallouts.length, `>= ${limits.minRecommendedTools}`)
     checks.minRecommendedToolWordCount = check(
@@ -252,7 +290,10 @@ export function validateGeneratedContentPage(page, sourceData = null) {
     if (!row.passed) errors.push(`${name} failed: expected ${formatValue(row.expected)}, got ${formatValue(row.actual)}`)
   }
 
-  validateRequiredBlockTypes(blocks, isCompare ? COMPARE_REQUIRED_BLOCK_TYPES : GUIDE_REQUIRED_BLOCK_TYPES, errors)
+  const requiredBlockTypes = isCompare
+    ? COMPARE_REQUIRED_BLOCK_TYPES
+    : pageType === 'BUYER_GUIDE' ? GUIDE_REQUIRED_BLOCK_TYPES : GUIDE_REQUIRED_BLOCK_TYPES.filter(type => type !== 'tool_callout')
+  validateRequiredBlockTypes(blocks, requiredBlockTypes, errors)
   validateForbiddenClaims(page, errors)
   validateHighRiskExpressions(page, errors, warnings)
   validateFaqQuestions(faqItems, errors)
@@ -283,6 +324,14 @@ export function validateGeneratedContentPage(page, sourceData = null) {
     },
     missingToolFields: collectMissingToolFields(sourceData?.tools || []),
     normalizedSources: sourceConsistency.normalizedSources,
+    inputContract: sourceData?.inputValidation || null,
+    inputContractType: sourceData?.inputValidation?.inputContractType || null,
+    selectedTools: sourceData?.inputValidation?.selectedTools || [],
+    missingRequiredFields: sourceData?.inputValidation?.missingRequiredFields || [],
+    forbiddenFieldsRemoved: sourceData?.inputValidation?.forbiddenFieldsRemoved || [],
+    sourceMapCount: sourceData?.inputValidation?.sourceMapCount || 0,
+    selectedToolStrategy: sourceData?.inputValidation?.selectedToolStrategy || sourceData?.selectedToolStrategy || null,
+    inputWarnings: sourceData?.inputValidation?.inputWarnings || [],
   })
 }
 
@@ -591,8 +640,10 @@ function calculateScore(checks, family) {
     metaDescriptionValid: 2,
   }
   const weights = family === 'compare' ? compareWeights : guideWeights
-  const total = Object.values(weights).reduce((sum, value) => sum + value, 0)
-  const earned = Object.entries(weights).reduce((sum, [name, weight]) => sum + (checks[name]?.passed ? weight : 0), 0)
+  const applicable = Object.entries(weights).filter(([name]) => checks[name])
+  const total = applicable.reduce((sum, [, value]) => sum + value, 0)
+  const earned = applicable.reduce((sum, [name, weight]) => sum + (checks[name].passed ? weight : 0), 0)
+  if (!total) return 0
   return Math.round((earned / total) * 100)
 }
 

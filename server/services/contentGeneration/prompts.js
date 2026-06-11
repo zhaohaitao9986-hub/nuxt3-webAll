@@ -5,12 +5,12 @@ import {
   PRODUCTION_PROMPT_VERSION,
   QUALITATIVE_PRICING_POLICY,
   contentRules,
-} from './editorialRules'
+} from './editorialRules.js'
 import {
   ALTERNATIVE_RESPONSE_SHAPE,
   COMPARE_RESPONSE_SHAPE,
   GUIDE_RESPONSE_SHAPE,
-} from './responseSchemas'
+} from './responseSchemas.js'
 
 export const editorialSystemPrompt = [
   'You are the production editorial content generation engine for AISeekTools.',
@@ -24,108 +24,37 @@ export const editorialSystemPrompt = [
   'Set contentPage.status to REVIEW and contentPage.robots to NOINDEX_FOLLOW.',
 ].join('\n')
 
-function compactPlan(plan) {
-  return {
-    planName: plan.planName,
-    billingInterval: plan.billingInterval,
-    isFree: plan.isFree,
-    hasTrial: plan.hasTrial,
-    seatLimit: plan.seatLimit,
-    usageLimit: plan.usageLimit,
-    features: (plan.features || []).slice(0, 8),
-    rawText: plan.rawText ? String(plan.rawText).slice(0, 600) : null,
-  }
+const TASK_INSTRUCTIONS = {
+  BUYER_GUIDE: [
+    'Help the stated audience choose among selectedTools using the supplied decisionCriteria.',
+    'Recommend only selectedTools and ground every recommendation in the matching toolFacts entry.',
+  ],
+  CATEGORY_GUIDE: [
+    'Explain the category using categoryContext as the primary evidence.',
+    'Use representativeTools only as concise examples; do not turn the page into a ranked buyer list.',
+    'Tool callouts are optional and must not be forced to five items.',
+  ],
+  TUTORIAL: [
+    'Teach the exact tutorialGoal using the supplied workflowContext in order.',
+    'Do not invent product steps or substitute generic category guidance.',
+    'The primaryTool is the workflow anchor; relatedTools are optional supporting references, not recommendations.',
+  ],
+  COMPARISON: [
+    'Compare exactly primaryTool and secondaryTool for comparisonIntent and targetAudience.',
+    'Do not introduce other tools as comparison subjects.',
+  ],
+  ALTERNATIVE: [
+    'Explain alternatives to primaryTool for the supplied reasonToSwitch.',
+    'Recommend only alternativeTools and use selectionCriteria and comparisonDimensions for trade-offs.',
+    'Do not model the first alternative as a secondaryTool.',
+  ],
 }
 
-function compactClaim(claim) {
+function guideRulesFor(contentType) {
+  if (contentType === 'BUYER_GUIDE') return contentRules.guides
   return {
-    claimType: claim.claimType,
-    claimText: claim.claimText,
-    confidence: claim.confidence,
-    status: claim.status,
-  }
-}
-
-function compactTool(tool) {
-  return {
-    id: tool.id,
-    slug: tool.handle,
-    handle: tool.handle,
-    name: tool.name,
-    website: tool.website,
-    description: tool.description ? String(tool.description).slice(0, 700) : null,
-    whatIsSummary: tool.whatIsSummary ? String(tool.whatIsSummary).slice(0, 700) : null,
-    pricingSummary: (tool.pricing || []).slice(0, 6).map(value => String(value).slice(0, 500)),
-    pricingPlans: (tool.pricingPlans || []).slice(0, 6).map(compactPlan),
-    keyClaims: (tool.claims || []).slice(0, 10).map(compactClaim),
-    features: (tool.features || []).slice(0, 12),
-    pros: (tool.pros || []).slice(0, 8),
-    cons: (tool.cons || []).slice(0, 8),
-    platforms: (tool.platforms || []).slice(0, 10),
-    tags: (tool.tags || []).slice(0, 10),
-    useCases: (tool.useCases || []).slice(0, 10),
-    forJobs: (tool.forJobs || []).slice(0, 10),
-    rating: tool.rating,
-    monthlyVisits: tool.monthlyVisits,
-    isFree: tool.isFree,
-    hasPricingContext: Boolean(tool.pricingPlans?.length || tool.pricing?.length),
-    hasClaims: Boolean(tool.claims?.length),
-  }
-}
-
-function compactCategory(category) {
-  if (!category) return null
-  return { id: category.id, name: category.name, handle: category.handle }
-}
-
-function compactGuideSource(sourceData) {
-  return {
-    task: sourceData.task,
-    contentType: sourceData.contentType,
-    slug: sourceData.slug,
-    canonicalPath: sourceData.canonicalPath,
-    language: sourceData.language,
-    audience: sourceData.audience,
-    intent: sourceData.intent,
-    category: sourceData.category
-      ? { level1: compactCategory(sourceData.category.level1), level2: compactCategory(sourceData.category.level2) }
-      : null,
-    relatedCategories: (sourceData.relatedCategories || []).map(compactCategory),
-    primaryTool: sourceData.primaryTool ? compactTool(sourceData.primaryTool) : null,
-    tools: (sourceData.tools || []).map(compactTool),
-    sources: sourceData.sources || [],
-    siteRules: sourceData.siteRules,
-    fieldPolicy: [
-      'Every tool note must use only that tool object.',
-      'If pricingPlans and pricingSummary are empty, do not mention plans, credits, seats, trials, or limits.',
-      'If keyClaims is empty, do not invent integrations, language counts, or performance claims.',
-      'Guide metadata must use category-level wording and must not list tool names.',
-      'Do not claim retrieval dates when sources.retrievedAt is null.',
-    ],
-  }
-}
-
-function compactCompareSource(sourceData) {
-  return {
-    task: sourceData.task,
-    contentType: sourceData.contentType,
-    comparisonType: sourceData.comparisonType,
-    slug: sourceData.slug,
-    canonicalPath: sourceData.canonicalPath,
-    language: sourceData.language,
-    primaryTool: sourceData.primaryTool ? compactTool(sourceData.primaryTool) : null,
-    secondaryTool: sourceData.secondaryTool ? compactTool(sourceData.secondaryTool) : null,
-    tools: (sourceData.tools || []).map(compactTool),
-    category: compactCategory(sourceData.category),
-    relatedCategories: (sourceData.relatedCategories || []).map(compactCategory),
-    requiredCriteria: sourceData.requiredCriteria || [],
-    sources: sourceData.sources || [],
-    fieldPolicy: [
-      'Compare pages may name compared tools in metadata.',
-      'Ground every matrix cell, criterion, pricing statement, pro, and con in the corresponding tool object.',
-      'If a tool has no pricing context, say pricing details require verification rather than inventing them.',
-      'Do not describe an unsupported universal winner; explain which tool fits each scenario.',
-    ],
+    ...contentRules.guides,
+    requirements: contentRules.guides.requirements.filter(rule => !/Recommend at least 5|tool_callout|How to choose|Recommended tools/i.test(rule)),
   }
 }
 
@@ -136,7 +65,8 @@ export function buildContentPrompt(sourceData) {
 }
 
 export function buildGuideUserPrompt(sourceData) {
-  const source = compactGuideSource(sourceData)
+  const source = sourceData.aiInput
+  const requiresRecommendations = sourceData.contentType === 'BUYER_GUIDE'
   return [
     `Generate a ${sourceData.contentType} production-ready SEO draft as JSON.`,
     `Prompt version: ${PRODUCTION_PROMPT_VERSION}.`,
@@ -145,12 +75,17 @@ export function buildGuideUserPrompt(sourceData) {
     JSON.stringify(contentRules.shared, null, 2),
     '',
     'Guide production rules:',
-    JSON.stringify(contentRules.guides, null, 2),
+    JSON.stringify(guideRulesFor(sourceData.contentType), null, 2),
+    '',
+    'Content-type task instructions:',
+    JSON.stringify(TASK_INSTRUCTIONS[sourceData.contentType], null, 2),
     '',
     'Non-negotiable validation targets:',
     `- ${PRODUCTION_LIMITS.guide.minWords}-${PRODUCTION_LIMITS.guide.maxWords} English editorial words`,
     `- ${PRODUCTION_LIMITS.guide.minBlocks}-${PRODUCTION_LIMITS.guide.maxBlocks} body blocks`,
-    `- at least ${PRODUCTION_LIMITS.guide.minRecommendedTools} distinct tool_callout recommendations`,
+    requiresRecommendations
+      ? `- at least ${PRODUCTION_LIMITS.guide.minRecommendedTools} distinct tool_callout recommendations`
+      : '- tool_callout blocks are optional; do not manufacture recommendations to meet a buyer-guide quota',
     `- at least ${PRODUCTION_LIMITS.guide.minFaqItems} FAQ items`,
     `- each section >= ${PRODUCTION_LIMITS.guide.minSectionWords} words`,
     `- each FAQ answer >= ${PRODUCTION_LIMITS.guide.minFaqAnswerWords} words`,
@@ -179,7 +114,7 @@ export function buildGuideUserPrompt(sourceData) {
       sources: 'copy sourceData.sources exactly',
     }, null, 2),
     '',
-    'Source data:',
+    'Validated AI input contract:',
     JSON.stringify(source, null, 2),
     '',
     'Return strict JSON only. The first character must be { and the last character must be }.',
@@ -187,7 +122,7 @@ export function buildGuideUserPrompt(sourceData) {
 }
 
 export function buildCompareUserPrompt(sourceData) {
-  const source = compactCompareSource(sourceData)
+  const source = sourceData.aiInput
   return [
     `Generate a ${sourceData.contentType} production-ready SEO comparison draft as JSON.`,
     `Prompt version: ${PRODUCTION_PROMPT_VERSION}.`,
@@ -197,6 +132,9 @@ export function buildCompareUserPrompt(sourceData) {
     '',
     'Compare production rules:',
     JSON.stringify(contentRules.compare, null, 2),
+    '',
+    'Content-type task instructions:',
+    JSON.stringify(TASK_INSTRUCTIONS[sourceData.contentType], null, 2),
     '',
     'Non-negotiable validation targets:',
     `- ${PRODUCTION_LIMITS.compare.minWords}-${PRODUCTION_LIMITS.compare.maxWords} English editorial words`,
@@ -220,7 +158,7 @@ export function buildCompareUserPrompt(sourceData) {
     'Required output shape:',
     JSON.stringify(buildCompareShapeExample(sourceData), null, 2),
     '',
-    'Source data:',
+    'Validated AI input contract:',
     JSON.stringify(source, null, 2),
     '',
     'Return strict JSON only. The first character must be { and the last character must be }.',
@@ -245,7 +183,7 @@ function buildCompareShapeExample(sourceData) {
   }
   if (base.alternativePage) {
     base.alternativePage.primaryToolId = sourceData.primaryTool?.id || 0
-    base.alternativeTools[0].toolId = sourceData.secondaryTool?.id || 0
+    base.alternativeTools[0].toolId = sourceData.aiInput?.alternativeTools?.[0]?.id || 0
   }
   base.sources = 'copy sourceData.sources exactly'
   return base
@@ -253,17 +191,21 @@ function buildCompareShapeExample(sourceData) {
 
 export function applyPromptTemplate(template, sourcePrompt, sourceData) {
   const value = String(template || '').trim()
+  const contractJson = JSON.stringify(sourceData.aiInput, null, 2)
   if (!value || value === '{{SOURCE_PROMPT}}') return sourcePrompt
   if (value.includes('{{SOURCE_PROMPT}}')) {
     return value
       .replaceAll('{{SOURCE_PROMPT}}', sourcePrompt)
-      .replaceAll('{{SOURCE_DATA_JSON}}', JSON.stringify(sourceData, null, 2))
+      .replaceAll('{{SOURCE_DATA_JSON}}', contractJson)
+      .replaceAll('{{INPUT_CONTRACT_JSON}}', contractJson)
   }
   return [
     sourcePrompt,
     '',
     'Prompt-version-specific additional instructions:',
-    value.replaceAll('{{SOURCE_DATA_JSON}}', JSON.stringify(sourceData, null, 2)),
+    value
+      .replaceAll('{{SOURCE_DATA_JSON}}', contractJson)
+      .replaceAll('{{INPUT_CONTRACT_JSON}}', contractJson),
   ].join('\n')
 }
 

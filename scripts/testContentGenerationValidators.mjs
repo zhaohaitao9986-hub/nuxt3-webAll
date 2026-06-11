@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict'
 import { validateGeneratedContentPage } from '../server/services/contentGeneration/validators.js'
+import { enforceInputContract } from '../server/services/contentGeneration/inputContracts.js'
+import { applyPromptTemplate } from '../server/services/contentGeneration/prompts.js'
+import { promptJsonWithBrief } from '../server/services/contentGeneration/taskStore.js'
+import {
+  buildContentGenerationBrief,
+  createContentGenerationBriefForm,
+  validateContentGenerationBrief,
+} from '../utils/contentGeneration.js'
 
 function words(count, prefix = 'Editorial guidance') {
   const sentence = `${prefix} explains practical evaluation details, grounded trade-offs, buyer context, implementation choices, and verification steps for a careful software decision.`
@@ -173,11 +181,129 @@ const riskyValidation = validateGeneratedContentPage(riskyGuide, guideSource)
 assert.equal(riskyValidation.ok, false)
 assert.match(riskyValidation.errors.join('\n'), /High-risk expression/)
 
+const categoryGuide = structuredClone(guide)
+categoryGuide.contentPage.type = 'CATEGORY_GUIDE'
+categoryGuide.bodyJson.blocks = categoryGuide.bodyJson.blocks.filter(block => block.type !== 'tool_callout')
+const categoryGuideValidation = validateGeneratedContentPage(categoryGuide, { ...guideSource, contentType: 'CATEGORY_GUIDE' })
+assert.equal(categoryGuideValidation.ok, true, categoryGuideValidation.errors.join('\n'))
+assert.equal(categoryGuideValidation.metrics.toolCalloutCount, 0)
+
 const unsupported = structuredClone(guide)
 unsupported.contentPage.type = 'TOOL_REVIEW'
 const unsupportedValidation = validateGeneratedContentPage(unsupported, null)
 assert.equal(unsupportedValidation.ok, false)
 assert.match(unsupportedValidation.errors.join('\n'), /unsupportedContentType/)
+
+const identity = id => ({ id, handle: `tool-${id}`, name: `Tool ${id}` })
+const sourceMap = id => ({ url: `https://tool-${id}.example.com`, toolId: id, factType: 'official' })
+const commonGuide = {
+  pageType: 'GUIDE',
+  targetKeyword: 'AI workflow tools',
+  pageGoal: 'Help readers make a grounded decision.',
+  searchIntent: 'Evaluate suitable tools.',
+  audience: 'Small teams',
+  sourceMap: [1, 2, 3, 4, 5].map(sourceMap),
+  internalLinks: [{ path: '/ai-tools/workflow', anchor: 'AI workflow tools' }],
+}
+
+const buyerInput = enforceInputContract('BUYER_GUIDE', {
+  ...commonGuide,
+  contentType: 'BUYER_GUIDE',
+  categoryContext: { id: 1, name: 'Workflow' },
+  selectedTools: [1, 2, 3, 4, 5].map(identity),
+  toolFacts: [1, 2, 3, 4, 5].map(identity),
+  decisionCriteria: ['Workflow fit', 'Output quality', 'Ease of use', 'Pricing', 'Integrations'].map(name => ({ name })),
+  socialLinks: [{ url: 'https://social.example.com' }],
+})
+assert.equal(buyerInput.validation.passed, true)
+assert.deepEqual(buyerInput.validation.forbiddenFieldsRemoved, ['socialLinks'])
+assert.equal('socialLinks' in buyerInput.input, false)
+
+const categoryInput = enforceInputContract('CATEGORY_GUIDE', {
+  ...commonGuide,
+  contentType: 'CATEGORY_GUIDE',
+  categoryContext: { id: 1, name: 'Workflow', whatIsSummary: 'Category definition' },
+  relatedCategories: [{ id: 2, name: 'Automation' }],
+  representativeTools: [1, 2, 3].map(identity),
+})
+assert.equal(categoryInput.validation.passed, true)
+
+const tutorialInput = enforceInputContract('TUTORIAL', {
+  ...commonGuide,
+  contentType: 'TUTORIAL',
+  tutorialGoal: 'Create a reviewed workflow draft.',
+  prerequisiteKnowledge: ['Basic prompting'],
+  primaryTool: identity(1),
+  workflowContext: [{ step: 1, instruction: 'Create a project.' }],
+  commonMistakes: ['Skipping review'],
+  outputChecklist: ['Draft reviewed'],
+  relatedTools: [],
+  sourceMap: [sourceMap(1)],
+})
+assert.equal(tutorialInput.validation.passed, true)
+
+const comparisonInput = enforceInputContract('COMPARISON', {
+  pageType: 'COMPARE',
+  contentType: 'COMPARISON',
+  comparisonIntent: 'Choose between two workflow tools.',
+  targetAudience: 'Small teams',
+  primaryTool: identity(1),
+  secondaryTool: identity(2),
+  sharedUseCases: ['Editorial workflow'],
+  decisionCriteria: ['Workflow fit', 'Output quality', 'Ease of use', 'Pricing', 'Integrations', 'Team adoption'].map(name => ({ name })),
+  featureComparisonFacts: [{ dimension: 'Workflow fit' }],
+  pricingComparisonFacts: [{ toolId: 1 }, { toolId: 2 }],
+  sourceMap: [sourceMap(1), sourceMap(2)],
+  internalLinks: [{ path: '/tool/tool-1', anchor: 'Tool 1' }],
+})
+assert.equal(comparisonInput.validation.passed, true)
+
+const missingSecondary = enforceInputContract('COMPARISON', { ...comparisonInput.input, secondaryTool: null })
+assert.equal(missingSecondary.validation.passed, false)
+assert.equal(missingSecondary.validation.missingRequiredFields.includes('secondaryTool'), true)
+
+const alternativeInput = enforceInputContract('ALTERNATIVE', {
+  pageType: 'COMPARE',
+  contentType: 'ALTERNATIVE',
+  primaryTool: identity(1),
+  alternativeTools: [identity(2), identity(3)],
+  reasonToSwitch: 'The current workflow lacks needed controls.',
+  selectionCriteria: ['Workflow controls', 'Output quality', 'Ease of use', 'Pricing', 'Integrations'].map(name => ({ name })),
+  comparisonDimensions: ['Workflow controls'],
+  pricingSummary: [{ toolId: 1 }, { toolId: 2 }, { toolId: 3 }],
+  sourceMap: [sourceMap(1), sourceMap(2), sourceMap(3)],
+  internalLinks: [{ path: '/tool/tool-1', anchor: 'Tool 1' }],
+})
+assert.equal(alternativeInput.validation.passed, true)
+
+const protectedPrompt = applyPromptTemplate('Contract: {{SOURCE_DATA_JSON}}', 'base prompt', {
+  aiInput: buyerInput.input,
+  secretFullSourceData: 'must-not-leak',
+})
+assert.equal(protectedPrompt.includes('must-not-leak'), false)
+assert.equal(protectedPrompt.includes('selectedTools'), true)
+
+const apiPromptJson = promptJsonWithBrief({
+  promptJson: { promptVersion: 'existing@1', input: { targetKeyword: 'legacy keyword' }, brief: { targetKeyword: 'old keyword' } },
+  targetKeyword: 'new keyword',
+  selectedToolIds: [1, 2, 3, 4, 5],
+  decisionCriteria: ['Fit', 'Price'],
+})
+assert.equal(apiPromptJson.promptVersion, 'existing@1')
+assert.equal(apiPromptJson.brief.targetKeyword, 'new keyword')
+assert.deepEqual(apiPromptJson.brief.selectedToolIds, [1, 2, 3, 4, 5])
+assert.equal(apiPromptJson.input, undefined)
+
+const formBrief = { ...createContentGenerationBriefForm(), contentType: 'comparison' }
+formBrief.primaryToolId = 1
+formBrief.secondaryToolId = 2
+formBrief.comparisonIntent = 'Choose one tool.'
+formBrief.targetAudience = 'Small teams'
+formBrief.decisionCriteriaText = 'Fit\nPrice\nQuality\nIntegrations\nAdoption\nSupport'
+formBrief.sharedUseCasesText = 'Editorial workflow'
+const builtFormBrief = buildContentGenerationBrief(formBrief)
+assert.deepEqual(builtFormBrief.decisionCriteria, ['Fit', 'Price', 'Quality', 'Integrations', 'Adoption', 'Support'])
+assert.equal(validateContentGenerationBrief(formBrief).ok, true)
 
 console.log(JSON.stringify({
   guide: guideValidation.metrics,
@@ -186,5 +312,17 @@ console.log(JSON.stringify({
   compareScore: compareValidation.score,
   thinGuideRejected: !thinValidation.ok,
   riskyGuideRejected: !riskyValidation.ok,
+  categoryGuideWithoutToolCallouts: categoryGuideValidation.ok,
   unsupportedTypeRejected: !unsupportedValidation.ok,
+  inputContracts: {
+    buyerGuide: buyerInput.validation.passed,
+    categoryGuide: categoryInput.validation.passed,
+    tutorial: tutorialInput.validation.passed,
+    comparison: comparisonInput.validation.passed,
+    alternative: alternativeInput.validation.passed,
+    missingSecondaryRejected: !missingSecondary.validation.passed,
+    fullSourceDataProtected: !protectedPrompt.includes('must-not-leak'),
+    apiBriefNormalization: apiPromptJson.brief.targetKeyword === 'new keyword',
+    adminFormBriefValidation: validateContentGenerationBrief(formBrief).ok,
+  },
 }, null, 2))
