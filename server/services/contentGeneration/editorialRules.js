@@ -1,4 +1,5 @@
 export const PRODUCTION_PROMPT_VERSION = 3
+export const COMPARE_PRODUCTION_PROMPT_VERSION = 4
 
 export const META_LIMITS = {
   metaTitleMax: 65,
@@ -38,13 +39,18 @@ export const PRODUCTION_LIMITS = {
   compare: {
     minWords: 1500,
     maxWords: 2500,
+    idealMinWords: 1900,
+    idealMaxWords: 2300,
     minBlocks: 10,
     maxBlocks: 16,
     minFaqItems: 5,
     minMatrixRows: 8,
     minCriteria: 6,
-    minSectionWords: 120,
+    minSectionWords: 90,
+    recommendedMinSectionWords: 120,
+    maxSectionWords: 220,
     minFaqAnswerWords: 60,
+    maxFaqAnswerWords: 100,
     minVerdictWords: 80,
   },
 }
@@ -171,9 +177,9 @@ export const COMPARE_BLOCK_SCHEMA_HINT = {
     type: 'scenarios',
     items: [{ title: 'use case', winner: 'primary|secondary|tie', text: 'grounded explanation' }],
   },
-  section: { type: 'section', heading: 'required topic heading', level: 2, html: '<p>120+ English words</p>' },
+  section: { type: 'section', heading: 'required topic heading', level: 2, html: '<p>120-220 English words preferred; 90 words hard minimum</p>' },
   methodology: { type: 'methodology', text: 'source-grounded methodology' },
-  faq: { type: 'faq', items: [{ question: 'evaluation question', answer: '60+ English words' }] },
+  faq: { type: 'faq', items: [{ question: 'evaluation question', answer: '60-100 English words' }] },
 }
 
 export const sharedContentRules = {
@@ -273,13 +279,16 @@ export const compareContentRules = {
   blockSchemas: COMPARE_BLOCK_SCHEMA_HINT,
   depth: PRODUCTION_LIMITS.compare,
   requirements: [
-    'Write 1,500-2,500 English editorial words.',
+    'Target 1,900-2,300 English editorial words. Never exceed 2,500 words; 1,500 words is the hard minimum.',
     'Create 10-16 bodyJson.blocks and include every required compare block type.',
     'Cover Overview, Quick verdict, Feature comparison matrix, Criteria analysis, buyer fit for each primary tool, Pricing comparison, Pros and cons, Use-case scenarios, Alternatives, Final recommendation, FAQ, and Methodology.',
     'comparisonPage.criteriaJson must contain at least 6 meaningful criteria.',
     'comparisonPage.matrixJson must contain at least 8 substantive comparison rows.',
     'comparisonPage.verdict must be specific and at least 80 words.',
-    'Each normal section must contain at least 120 words and each FAQ answer at least 60 words.',
+    'Keep each normal section within 90-220 words, preferably 120-220 words. Keep each FAQ answer within 60-100 words.',
+    'Keep Criteria Analysis compact: use only 1-2 sentences per dimension and do not repeat details already covered by matrixJson.',
+    'Do not expand FAQ answers beyond 100 words during drafting or revision.',
+    'Never use guarantee or guaranteed. Replace them with help, support, improve, reduce risk, increase likelihood, may help, or is designed to. Replace guarantee rankings with support SEO workflows or improve the optimization process.',
     'Include at least 5 FAQ items.',
     'Include comparisonTools or alternativeTools using source tool IDs only.',
     'Use requiredCriteria from source and analyze meaningful trade-offs rather than declaring an unsupported universal winner.',

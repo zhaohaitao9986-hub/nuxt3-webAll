@@ -6,6 +6,7 @@ import { buildSourceMap, compactToolFacts } from '../server/services/contentGene
 import { promptJsonWithBrief } from '../server/services/contentGeneration/taskStore.js'
 import {
   buildContentGenerationBrief,
+  contentGenerationTargetType,
   createContentGenerationBriefForm,
   validateContentGenerationBrief,
 } from '../utils/contentGeneration.js'
@@ -168,6 +169,40 @@ assert.equal(compareValidation.score >= 85, true)
 assert.equal(guideValidation.normalizedSources.length, 6)
 assert.equal(compareValidation.normalizedSources.length, 2)
 assert.equal(compareValidation.warnings.filter(message => message.startsWith('Unused source:')).length, 4)
+
+const dynamicBestFor = structuredClone(compare)
+dynamicBestFor.bodyJson.blocks[4].heading = 'Best For Tool 1'
+dynamicBestFor.bodyJson.blocks[5].heading = 'Best For Tool 2'
+dynamicBestFor.comparisonTools[0].label = 'A'
+dynamicBestFor.comparisonTools[0].bestFor = ''
+dynamicBestFor.comparisonTools[1].label = 'B'
+dynamicBestFor.comparisonTools[1].bestFor = ''
+const dynamicBestForValidation = validateGeneratedContentPage(dynamicBestFor, compareSource)
+assert.equal(dynamicBestForValidation.checks.requiredTopics.passed, true, dynamicBestForValidation.errors.join('\n'))
+
+const structuralBestFor = structuredClone(compare)
+structuralBestFor.bodyJson.blocks[4].heading = 'Primary Buyer Fit'
+structuralBestFor.bodyJson.blocks[5].heading = 'Secondary Buyer Fit'
+const structuralBestForValidation = validateGeneratedContentPage(structuralBestFor, compareSource)
+assert.equal(structuralBestForValidation.checks.requiredTopics.passed, true, structuralBestForValidation.errors.join('\n'))
+
+const shortCompareSection = structuredClone(compare)
+shortCompareSection.bodyJson.blocks[0].html = `<p>${exactWords(100)}</p>`
+const shortCompareSectionValidation = validateGeneratedContentPage(shortCompareSection, compareSource)
+assert.equal(shortCompareSectionValidation.ok, true, shortCompareSectionValidation.errors.join('\n'))
+assert.equal(shortCompareSectionValidation.checks.minSectionWordCount.severity, 'warning')
+
+const longCompareSection = structuredClone(compare)
+longCompareSection.bodyJson.blocks[0].html = `<p>${exactWords(221)}</p>`
+const longCompareSectionValidation = validateGeneratedContentPage(longCompareSection, compareSource)
+assert.equal(longCompareSectionValidation.ok, false)
+assert.equal(longCompareSectionValidation.checks.minSectionWordCount.passed, false)
+
+const longCompareFaq = structuredClone(compare)
+longCompareFaq.bodyJson.blocks.find(block => block.type === 'faq').items[0].answer = exactWords(101)
+const longCompareFaqValidation = validateGeneratedContentPage(longCompareFaq, compareSource)
+assert.equal(longCompareFaqValidation.ok, false)
+assert.equal(longCompareFaqValidation.checks.minFaqAnswerWordCount.passed, false)
 
 const thinGuide = structuredClone(guide)
 thinGuide.bodyJson.blocks = thinGuide.bodyJson.blocks.slice(0, 6)
@@ -349,6 +384,7 @@ assert.deepEqual(apiPromptJson.brief.selectedToolIds, [1, 2, 3, 4, 5])
 assert.equal(apiPromptJson.input, undefined)
 
 const formBrief = { ...createContentGenerationBriefForm(), contentType: 'comparison' }
+formBrief.categoryId = 10
 formBrief.primaryToolId = 1
 formBrief.secondaryToolId = 2
 formBrief.comparisonIntent = 'Choose one tool.'
@@ -358,6 +394,10 @@ formBrief.sharedUseCasesText = 'Editorial workflow'
 const builtFormBrief = buildContentGenerationBrief(formBrief)
 assert.deepEqual(builtFormBrief.decisionCriteria, ['Fit', 'Price', 'Quality', 'Integrations', 'Adoption', 'Support'])
 assert.equal(validateContentGenerationBrief(formBrief).ok, true)
+assert.equal(contentGenerationTargetType('COMPARISON'), 'compare')
+assert.equal(contentGenerationTargetType('ALTERNATIVE'), 'compare')
+assert.equal(contentGenerationTargetType('BUYER_GUIDE'), 'guides')
+assert.equal(contentGenerationTargetType('TUTORIAL'), 'guides')
 
 console.log(JSON.stringify({
   guide: guideValidation.metrics,

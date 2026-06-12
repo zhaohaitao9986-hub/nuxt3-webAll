@@ -73,6 +73,10 @@ function fromDbContentType(value) {
   return DB_TO_CONTENT_TYPE[value] || String(value || '').toLowerCase()
 }
 
+function targetTypeForContentType(contentType) {
+  return ['COMPARISON', 'ALTERNATIVE'].includes(String(contentType || '').toUpperCase()) ? 'compare' : 'guides'
+}
+
 function normalizeJson(value) {
   if (value === undefined || value === '') {
     return null
@@ -145,6 +149,33 @@ function validateTaskBrief(contentType, promptJson, categoryId) {
   }
   if (missing.length) {
     throw createError({ statusCode: 400, statusMessage: `invalidPromptBrief: ${[...new Set(missing)].join(', ')}` })
+  }
+}
+
+async function validateCompareToolCategories(contentType, categoryId, toolId, promptJson) {
+  const type = String(contentType || '').toUpperCase()
+  if (!['COMPARISON', 'ALTERNATIVE'].includes(type)) return
+  const normalizedCategoryId = Number(categoryId) || null
+  if (!normalizedCategoryId) {
+    throw createError({ statusCode: 400, statusMessage: 'Compare 内容必须选择二级分类' })
+  }
+
+  const brief = promptJson?.brief && typeof promptJson.brief === 'object' ? promptJson.brief : {}
+  const toolIds = [...new Set([
+    Number(brief.primaryToolId || toolId) || null,
+    type === 'COMPARISON' ? Number(brief.secondaryToolId) || null : null,
+    ...(type === 'ALTERNATIVE' ? (brief.alternativeToolIds || []).map(Number) : []),
+  ].filter(Boolean))]
+  if (!toolIds.length) return
+
+  const assignments = await prisma.aiToolCategory.findMany({
+    where: { categoryId: normalizedCategoryId, aiToolId: { in: toolIds } },
+    select: { aiToolId: true },
+  })
+  const assignedIds = new Set(assignments.map(row => row.aiToolId))
+  const invalidIds = toolIds.filter(id => !assignedIds.has(id))
+  if (invalidIds.length) {
+    throw createError({ statusCode: 400, statusMessage: `工具不属于所选二级分类：${invalidIds.join(', ')}` })
   }
 }
 
@@ -319,7 +350,11 @@ export async function createContentGenerationTask(input, auth) {
   const title = String(input.title || '').trim() || `${contentType} draft`
   const categoryId = normalizeOptionalNumber(input.categoryId ?? input.category_id)
   const promptJson = promptJsonWithBrief(input)
-  if (promptJson?.brief && Object.keys(promptJson.brief).length) validateTaskBrief(contentType, promptJson, categoryId)
+  if (status !== 'draft' && promptJson?.brief && Object.keys(promptJson.brief).length) {
+    validateTaskBrief(contentType, promptJson, categoryId)
+  }
+  const toolId = normalizeOptionalNumber(input.toolId ?? input.tool_id)
+  await validateCompareToolCategories(contentType, categoryId, toolId, promptJson)
 
   const created = await prisma.$transaction(async (tx) => {
     const row = await tx.contentGenerationTask.create({
@@ -327,9 +362,9 @@ export async function createContentGenerationTask(input, auth) {
         title,
         slug: String(input.slug || '').trim() || null,
         contentType,
-        targetType: String(input.targetType || input.target_type || '').trim() || null,
+        targetType: targetTypeForContentType(contentType),
         categoryId,
-        toolId: normalizeOptionalNumber(input.toolId ?? input.tool_id),
+        toolId,
         limitCount: normalizeLimit(input.limit ?? input.limitCount ?? input.limit_count),
         status: STATUS_TO_DB[status],
         sourceDataJson: normalizeJson(input.sourceDataJson ?? input.source_data_json),
@@ -369,7 +404,10 @@ export async function updateContentGenerationTask(id, input, auth) {
     data.contentType = toDbContentType(input.contentType ?? input.content_type)
   }
   if (input.targetType !== undefined || input.target_type !== undefined) {
-    data.targetType = String((input.targetType ?? input.target_type) || '').trim() || null
+    data.targetType = targetTypeForContentType(data.contentType || current.contentType)
+  }
+  else if (data.contentType !== undefined) {
+    data.targetType = targetTypeForContentType(data.contentType)
   }
   if (input.categoryId !== undefined || input.category_id !== undefined) {
     data.categoryId = normalizeOptionalNumber(input.categoryId ?? input.category_id)
@@ -412,6 +450,15 @@ export async function updateContentGenerationTask(id, input, auth) {
   }
   if ((data.promptJson?.brief && Object.keys(data.promptJson.brief).length) || (data.contentType !== undefined && current.promptJson?.brief)) {
     validateTaskBrief(data.contentType || current.contentType, data.promptJson ?? current.promptJson, data.categoryId ?? current.categoryId)
+  }
+  const compareSelectionChanged = ['contentType', 'categoryId', 'toolId', 'promptJson'].some(field => data[field] !== undefined)
+  if (compareSelectionChanged) {
+    await validateCompareToolCategories(
+      data.contentType || current.contentType,
+      data.categoryId !== undefined ? data.categoryId : current.categoryId,
+      data.toolId !== undefined ? data.toolId : current.toolId,
+      data.promptJson !== undefined ? data.promptJson : current.promptJson,
+    )
   }
   if (data.title !== undefined && !data.title) {
     throw createError({ statusCode: 400, statusMessage: '任务标题必填' })

@@ -6,6 +6,7 @@ import {
   CONTENT_GENERATION_STATUS_OPTIONS,
   contentGenerationStatusLabel,
   contentGenerationStatusType,
+  contentGenerationTargetType,
   createContentGenerationBriefForm,
   fillContentGenerationDetailForm,
   parseContentJsonText,
@@ -175,8 +176,8 @@ async function saveDetail() {
 
 async function prepareBrief() {
   const type = String(detailForm.contentType).toUpperCase()
-  if (['BUYER_GUIDE', 'CATEGORY_GUIDE'].includes(type) && !detailForm.categoryId) {
-    ElMessage.warning('请先选择分类')
+  if (['BUYER_GUIDE', 'CATEGORY_GUIDE', 'COMPARISON', 'ALTERNATIVE'].includes(type) && !detailForm.categoryId) {
+    ElMessage.warning('请先选择二级分类')
     return
   }
   if (['TUTORIAL', 'COMPARISON', 'ALTERNATIVE'].includes(type) && !detailForm.primaryToolId) {
@@ -384,6 +385,16 @@ onMounted(() => {
 watch(taskId, () => {
   loadDetail()
 })
+
+watch(() => detailForm.contentType, (contentType, previousType) => {
+  detailForm.targetType = contentGenerationTargetType(contentType)
+  if (previousType && String(previousType).toUpperCase() !== String(contentType).toUpperCase()) {
+    detailForm.categoryId = ''
+    detailForm.primaryToolId = ''
+    detailForm.secondaryToolId = ''
+    detailForm.alternativeToolIds = []
+  }
+})
 </script>
 
 <template>
@@ -487,9 +498,9 @@ watch(taskId, () => {
           <el-input v-model="detailForm.contentType" :disabled="generationLoading" />
         </el-form-item>
         <el-form-item label="目标类型">
-          <el-input v-model="detailForm.targetType" :disabled="generationLoading" />
+          <el-input v-model="detailForm.targetType" readonly />
         </el-form-item>
-        <el-form-item label="分类" :required="String(detailForm.contentType).toUpperCase() === 'CATEGORY_GUIDE'">
+        <el-form-item v-if="!['COMPARISON', 'ALTERNATIVE'].includes(String(detailForm.contentType).toUpperCase())" label="分类" :required="['BUYER_GUIDE', 'CATEGORY_GUIDE'].includes(String(detailForm.contentType).toUpperCase())">
           <el-select
             v-model="detailForm.categoryId"
             clearable

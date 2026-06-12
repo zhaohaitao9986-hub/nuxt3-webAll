@@ -1,4 +1,5 @@
 import {
+  COMPARE_PRODUCTION_PROMPT_VERSION,
   FORBIDDEN_CLAIM_LABELS,
   META_LIMITS,
   PRODUCTION_LIMITS,
@@ -134,7 +135,7 @@ export function buildCompareUserPrompt(sourceData) {
   const source = sourceData.aiInput
   return [
     `Generate a ${sourceData.contentType} production-ready SEO comparison draft as JSON.`,
-    `Prompt version: ${PRODUCTION_PROMPT_VERSION}.`,
+    `Prompt version: ${COMPARE_PRODUCTION_PROMPT_VERSION}.`,
     '',
     'Shared production rules:',
     JSON.stringify(contentRules.shared, null, 2),
@@ -146,16 +147,19 @@ export function buildCompareUserPrompt(sourceData) {
     JSON.stringify(TASK_INSTRUCTIONS[sourceData.contentType], null, 2),
     '',
     'Non-negotiable validation targets:',
-    `- ${PRODUCTION_LIMITS.compare.minWords}-${PRODUCTION_LIMITS.compare.maxWords} English editorial words`,
+    `- ideal total length ${PRODUCTION_LIMITS.compare.idealMinWords}-${PRODUCTION_LIMITS.compare.idealMaxWords} English editorial words; hard range ${PRODUCTION_LIMITS.compare.minWords}-${PRODUCTION_LIMITS.compare.maxWords}`,
     `- ${PRODUCTION_LIMITS.compare.minBlocks}-${PRODUCTION_LIMITS.compare.maxBlocks} body blocks`,
     sourceData.contentType === 'COMPARISON'
       ? `- at least ${PRODUCTION_LIMITS.compare.minMatrixRows} matrix rows`
       : '- include at least one grounded alternative tool distinct from the primary tool',
     `- at least ${PRODUCTION_LIMITS.compare.minCriteria} meaningful criteria`,
     `- at least ${PRODUCTION_LIMITS.compare.minFaqItems} FAQ items`,
-    `- each section >= ${PRODUCTION_LIMITS.compare.minSectionWords} words`,
-    `- each FAQ answer >= ${PRODUCTION_LIMITS.compare.minFaqAnswerWords} words`,
+    `- each section ${PRODUCTION_LIMITS.compare.minSectionWords}-${PRODUCTION_LIMITS.compare.maxSectionWords} words; prefer ${PRODUCTION_LIMITS.compare.recommendedMinSectionWords}-${PRODUCTION_LIMITS.compare.maxSectionWords}`,
+    `- each FAQ answer ${PRODUCTION_LIMITS.compare.minFaqAnswerWords}-${PRODUCTION_LIMITS.compare.maxFaqAnswerWords} words; do not expand already compliant FAQ answers`,
     `- verdict >= ${PRODUCTION_LIMITS.compare.minVerdictWords} words and scenario-specific`,
+    '- Criteria Analysis: 1-2 sentences per dimension. Do not restate matrix rows as long paragraphs.',
+    '- Use explicit headings "Best For {primaryTool.name}" and "Best For {secondaryTool.name}" for the two buyer-fit sections.',
+    '- Never write guarantee, guaranteed, or guarantee rankings. Use help, support, improve, reduce risk, increase likelihood, may help, is designed to, support SEO workflows, or improve the optimization process.',
     '- contentPage.status = REVIEW and robots = NOINDEX_FOLLOW',
     sourceData.contentType === 'COMPARISON'
       ? '- comparisonPage.matrixJson must be an array of rows or an object containing a rows array'
@@ -227,6 +231,9 @@ export function buildExpandFixPrompt(originalPrompt, rawOutput, validation) {
     (row.name === 'wordCount' || row.name === 'blockCount')
     && Number(row.actual) > Number(String(row.expected).split('-').at(-1))
   ))
+  const isCompareFix = ['COMPARISON', 'ALTERNATIVE'].includes(String(
+    validation?.inputContractType || validation?.inputContract?.inputContractType || validation?.contentType || '',
+  ).toUpperCase())
 
   return [
     originalPrompt,
@@ -237,7 +244,10 @@ export function buildExpandFixPrompt(originalPrompt, rawOutput, validation) {
     overBudget
       ? 'The draft is over budget. Compress repeated explanations, merge overlapping sections, and remove optional blocks while preserving required topics. Do not add detail.'
       : 'Add only the detail needed for failed minimum checks. Do not create duplicate sections or repeat explanations.',
-    'Replace forbidden absolute wording with cautious, evidence-based language.',
+    'Replace forbidden absolute wording with cautious, evidence-based language. Replace guarantee with help, support, improve, reduce risk, or increase likelihood; guaranteed with may help or is designed to; and guarantee rankings with support SEO workflows or improve the optimization process.',
+    isCompareFix
+      ? 'For Compare revisions, target 1,900-2,300 total words and never exceed 2,500. Keep sections at 90-220 words; do not expand sections already within range. Compress Criteria Analysis to 1-2 sentences per dimension and do not repeat matrix content. Keep FAQ answers at 60-100 words and do not expand compliant FAQs.'
+      : '',
     'Rewrite ranking-style FAQ questions as evaluation questions such as "How should I evaluate...", "Which factors matter when...", or "When should I choose...".',
     'Remove unsupported feature details. A tool feature may appear only when it is grounded in that tool\'s allowedFeatures or other explicit tool facts.',
     'Fix these checks:',

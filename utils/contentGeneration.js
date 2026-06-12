@@ -79,6 +79,11 @@ export function normalizeContentGenerationType(value) {
   return String(value || '').trim().toUpperCase()
 }
 
+export function contentGenerationTargetType(value) {
+  const type = normalizeContentGenerationType(value)
+  return ['COMPARISON', 'ALTERNATIVE'].includes(type) ? 'compare' : 'guides'
+}
+
 export function buildContentGenerationBrief(form) {
   const contentType = normalizeContentGenerationType(form.contentType)
   const common = {
@@ -146,6 +151,7 @@ export function validateContentGenerationBrief(form) {
     need('outputChecklist', '输出检查')
   }
   if (type === 'COMPARISON') {
+    if (!form.categoryId) missing.push('二级分类')
     need('primaryToolId', '主工具')
     need('secondaryToolId', '对比工具')
     need('comparisonIntent', '对比意图')
@@ -154,6 +160,7 @@ export function validateContentGenerationBrief(form) {
     if (brief.primaryToolId && Number(brief.primaryToolId) === Number(brief.secondaryToolId)) missing.push('主工具和对比工具不能相同')
   }
   if (type === 'ALTERNATIVE') {
+    if (!form.categoryId) missing.push('二级分类')
     need('primaryToolId', '主工具')
     if ((brief.alternativeToolIds || []).length < 2) missing.push('至少 2 个替代工具')
     need('reasonToSwitch', '切换原因')

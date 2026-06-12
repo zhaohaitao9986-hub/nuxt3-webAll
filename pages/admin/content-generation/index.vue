@@ -3,8 +3,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import ContentGenerationBriefFields from '~/components/contentGeneration/ContentGenerationBriefFields.vue'
 import {
   CONTENT_GENERATION_STATUS_OPTIONS,
+  buildContentGenerationBrief,
   contentGenerationStatusLabel,
   contentGenerationStatusType,
+  contentGenerationTargetType,
   createContentGenerationBriefForm,
 } from '~/utils/contentGeneration'
 
@@ -42,7 +44,7 @@ const createForm = reactive({
   title: '',
   slug: '',
   contentType: 'BUYER_GUIDE',
-  targetType: 'guide',
+  targetType: 'guides',
   categoryId: '',
   toolId: '',
   limit: 5,
@@ -194,7 +196,7 @@ function openCreate() {
   createForm.title = ''
   createForm.slug = ''
   createForm.contentType = 'BUYER_GUIDE'
-  createForm.targetType = 'guide'
+  createForm.targetType = 'guides'
   createForm.categoryId = ''
   createForm.toolId = ''
   createForm.limit = 5
@@ -205,7 +207,7 @@ function openCreate() {
 
 function validatePrepareSeed() {
   const type = String(createForm.contentType).toUpperCase()
-  if (['BUYER_GUIDE', 'CATEGORY_GUIDE'].includes(type) && !createForm.categoryId) return '请选择分类'
+  if (['BUYER_GUIDE', 'CATEGORY_GUIDE', 'COMPARISON', 'ALTERNATIVE'].includes(type) && !createForm.categoryId) return '请选择二级分类'
   if (['TUTORIAL', 'COMPARISON', 'ALTERNATIVE'].includes(type) && !createForm.primaryToolId) return '请选择主工具'
   return ''
 }
@@ -234,6 +236,7 @@ async function submitCreate(prepareBrief = false) {
       toolId: createForm.primaryToolId || createForm.toolId || null,
       limit: createForm.limit,
       status: createForm.status,
+      promptJson: { brief: buildContentGenerationBrief(createForm) },
     })
     if (prepareBrief) {
       await adminAxios.post(`/api/admin/content-generation/tasks/${response.data.id}/prepare-brief`, {
@@ -302,6 +305,14 @@ async function changeStatus(row, status) {
 onMounted(() => {
   loadOptions()
   loadList()
+})
+
+watch(() => createForm.contentType, (contentType) => {
+  createForm.targetType = contentGenerationTargetType(contentType)
+  createForm.categoryId = ''
+  createForm.primaryToolId = ''
+  createForm.secondaryToolId = ''
+  createForm.alternativeToolIds = []
 })
 </script>
 
@@ -447,9 +458,9 @@ onMounted(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="目标类型">
-          <el-input v-model="createForm.targetType" placeholder="guide / compare / alternative" />
+          <el-input v-model="createForm.targetType" readonly />
         </el-form-item>
-        <el-form-item label="分类" :required="String(createForm.contentType).toUpperCase() === 'CATEGORY_GUIDE'">
+        <el-form-item v-if="!['COMPARISON', 'ALTERNATIVE'].includes(String(createForm.contentType).toUpperCase())" label="分类" :required="['BUYER_GUIDE', 'CATEGORY_GUIDE'].includes(String(createForm.contentType).toUpperCase())">
           <el-select
             v-model="createForm.categoryId"
             clearable

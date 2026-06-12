@@ -200,6 +200,27 @@ export function collectMissingToolFields(tools) {
   }).filter(Boolean)
 }
 
+function hasCompareBestForCoverage(page, sourceData, fullBodyText, role) {
+  const isSecondary = role === 'secondary'
+  const tool = isSecondary
+    ? sourceData?.secondaryTool || sourceData?.aiInput?.secondaryTool
+    : sourceData?.primaryTool || sourceData?.aiInput?.primaryTool
+  const normalizedText = String(fullBodyText || '').toLowerCase()
+  const identifiers = [tool?.name, tool?.handle]
+    .map(value => String(value || '').trim().toLowerCase())
+    .filter(Boolean)
+  const headingMatchesTool = identifiers.some(identifier => (
+    normalizedText.includes(`best for ${identifier}`)
+    || normalizedText.includes(`best for: ${identifier}`)
+  ))
+  const structuralCoverage = (page.comparisonTools || []).some(row => {
+    const label = String(row?.label || '').trim().toLowerCase()
+    const matchesRole = isSecondary ? label === 'secondary' : label === 'primary'
+    return matchesRole && isNonEmptyString(row?.bestFor)
+  })
+  return headingMatchesTool || structuralCoverage
+}
+
 export function validateGeneratedContentPage(page, sourceData = null) {
   const errors = []
   const warnings = []
@@ -248,6 +269,8 @@ export function validateGeneratedContentPage(page, sourceData = null) {
     keyCriteria: blocks.some(block => block?.type === 'framework' && (block.criteria?.length || 0) > 0),
     recommendedTools: toolCallouts.length >= (limits.minRecommendedTools || 1),
     decisionGuidance: blocks.some(block => block?.type === 'decision_tree' && (block.branches?.length || 0) > 0),
+    bestForPrimary: isCompare && hasCompareBestForCoverage(page, sourceData, fullBodyText, 'primary'),
+    bestForSecondary: isCompare && hasCompareBestForCoverage(page, sourceData, fullBodyText, 'secondary'),
   }
   const missingTopics = topics
     .filter(topic => !topic.pattern.test(fullBodyText) && !semanticTopicCoverage[topic.key])
@@ -270,7 +293,8 @@ export function validateGeneratedContentPage(page, sourceData = null) {
   checks.minSectionWordCount = buildLengthRangeCheck({
     rows: sectionWordCounts,
     minimumCount: 1,
-    recommendedMin: limits.minSectionWords,
+    allowedMin: isCompare ? limits.minSectionWords : undefined,
+    recommendedMin: isCompare ? limits.recommendedMinSectionWords : limits.minSectionWords,
     recommendedMax: limits.maxSectionWords,
     allowedMax: pageType === 'BUYER_GUIDE' ? 220 : limits.maxSectionWords,
     rule: 'sectionWordCount',
@@ -531,6 +555,7 @@ function extractGuideCriteria(blocks) {
 function buildLengthRangeCheck({
   rows,
   minimumCount,
+  allowedMin,
   recommendedMin,
   recommendedMax,
   allowedMax,
@@ -538,11 +563,13 @@ function buildLengthRangeCheck({
   label,
   warnings,
 }) {
+  const hardMinimum = Number.isFinite(allowedMin) ? allowedMin : recommendedMin
   const hasRecommendedMaximum = Number.isFinite(recommendedMax)
   const hardMaximum = Number.isFinite(allowedMax) ? allowedMax : recommendedMax
   const hardFailures = rows.filter(row => (
-    row.words < recommendedMin || (Number.isFinite(hardMaximum) && row.words > hardMaximum)
+    row.words < hardMinimum || (Number.isFinite(hardMaximum) && row.words > hardMaximum)
   ))
+  const softUnderages = rows.filter(row => row.words >= hardMinimum && row.words < recommendedMin)
   const softOverages = hasRecommendedMaximum
     ? rows.filter(row => row.words > recommendedMax && (!Number.isFinite(hardMaximum) || row.words <= hardMaximum))
     : []
@@ -557,13 +584,22 @@ function buildLengthRangeCheck({
       allowedRange: `${recommendedMin}-${hardMaximum}`,
     }))
   }
+  for (const row of softUnderages) {
+    warnings.push(warning(rule, `${label} is below the recommended length (${row.words} words)`, {
+      index: row.index,
+      heading: row.heading || undefined,
+      actual: row.words,
+      recommendedRange: `${recommendedMin}-${recommendedMax}`,
+      allowedRange: `${hardMinimum}-${hardMaximum}`,
+    }))
+  }
 
   const expected = Number.isFinite(hardMaximum)
-    ? `every ${label.toLowerCase()} allowed ${recommendedMin}-${hardMaximum} words; recommended ${recommendedMin}-${recommendedMax}`
-    : `every ${label.toLowerCase()} >= ${recommendedMin} words`
+    ? `every ${label.toLowerCase()} allowed ${hardMinimum}-${hardMaximum} words; recommended ${recommendedMin}-${recommendedMax}`
+    : `every ${label.toLowerCase()} >= ${hardMinimum} words`
 
   if (!hasEnoughRows || hardFailures.length) return check(false, rows, expected)
-  if (softOverages.length) return check(false, rows, expected, { severity: 'warning' })
+  if (softOverages.length || softUnderages.length) return check(false, rows, expected, { severity: 'warning' })
   return check(true, rows, expected)
 }
 

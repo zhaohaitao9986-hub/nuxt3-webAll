@@ -64,16 +64,34 @@ async function categoryWithTools(categoryId) {
   })
 }
 
-async function primaryContext(toolId) {
+async function primaryContext(toolId, preferredCategoryId = null) {
   if (!toolId) return null
   const tool = await prisma.aiTool.findFirst({
     where: { id: Number(toolId), toolStatus: { in: ['ONLINE', 'ACTIVE'] } },
     select: toolSelect(),
   })
   if (!tool) return null
-  const categoryId = tool.toolCategories[0]?.categoryId || null
+  const requestedCategoryId = Number(preferredCategoryId) || null
+  const categoryId = requestedCategoryId || tool.toolCategories[0]?.categoryId || null
   const category = categoryId ? await categoryWithTools(categoryId) : null
   return { tool, category }
+}
+
+async function explicitComparisonTool(toolId, categoryId, primaryToolId) {
+  const normalizedToolId = Number(toolId) || null
+  if (!normalizedToolId) return null
+  if (normalizedToolId === Number(primaryToolId)) {
+    throw createError({ statusCode: 422, statusMessage: 'prepareBriefDuplicateComparisonTools' })
+  }
+  const tool = await prisma.aiTool.findFirst({
+    where: { id: normalizedToolId, toolStatus: { in: ['ONLINE', 'ACTIVE'] } },
+    select: toolSelect(),
+  })
+  if (!tool) throw createError({ statusCode: 422, statusMessage: 'prepareBriefSecondaryToolNotFound' })
+  if (categoryId && !tool.toolCategories.some(row => row.categoryId === Number(categoryId))) {
+    throw createError({ statusCode: 422, statusMessage: 'prepareBriefSecondaryToolOutsideCategory' })
+  }
+  return tool
 }
 
 function criteria(category, count) {
@@ -126,7 +144,7 @@ export async function prepareDeterministicBrief(task) {
     }
   }
 
-  const context = await primaryContext(task.toolId || task.promptJson?.brief?.primaryToolId)
+  const context = await primaryContext(task.toolId || task.promptJson?.brief?.primaryToolId, task.categoryId)
   if (!context) throw createError({ statusCode: 400, statusMessage: 'prepareBriefMissingPrimaryTool' })
   const { tool: primary, category } = context
   const candidates = category?.toolCategories?.map(row => row.aiTool) || []
@@ -155,8 +173,9 @@ export async function prepareDeterministicBrief(task) {
   }
 
   if (type === 'COMPARISON') {
-    const secondary = task.promptJson?.brief?.secondaryToolId
-      ? candidates.find(tool => tool.id === Number(task.promptJson.brief.secondaryToolId))
+    const secondaryToolId = task.promptJson?.brief?.secondaryToolId
+    const secondary = secondaryToolId
+      ? await explicitComparisonTool(secondaryToolId, task.categoryId, primary.id)
       : diversifiedTools(candidates, 1, [primary.id])[0]
     if (!secondary) throw createError({ statusCode: 422, statusMessage: 'prepareBriefMissingSecondaryTool' })
     const dimensions = criteria(category, 8)

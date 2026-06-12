@@ -8,6 +8,10 @@ const props = defineProps({
 const adminAxios = useAdminAxios()
 const contentType = computed(() => String(props.form.contentType || '').toUpperCase())
 const showCommonSeo = computed(() => ['BUYER_GUIDE', 'CATEGORY_GUIDE', 'TUTORIAL'].includes(contentType.value))
+const showCompareCascade = computed(() => ['COMPARISON', 'ALTERNATIVE'].includes(contentType.value))
+const level1Options = ref([])
+const categoryOptions = ref([])
+const selectedLevel1Id = ref('')
 const toolOptions = ref([])
 const toolLoading = ref(false)
 
@@ -17,11 +21,25 @@ function mergeTools(rows) {
   toolOptions.value = [...byId.values()]
 }
 
+function selectedToolIds() {
+  return new Set([
+    ...(props.form.selectedToolIds || []),
+    props.form.primaryToolId,
+    props.form.secondaryToolId,
+    ...(props.form.alternativeToolIds || []),
+  ].filter(Boolean).map(Number))
+}
+
 async function searchTools(query = '') {
   toolLoading.value = true
   try {
-    const response = await adminAxios.get('/api/admin/content-generation/tools/search', { params: { q: query.trim() } })
-    mergeTools(response.data?.data || [])
+    const response = await adminAxios.get('/api/admin/content-generation/tools/search', {
+      params: { q: query.trim(), categoryId: showCompareCascade.value ? props.form.categoryId || undefined : undefined },
+    })
+    const selectedIds = selectedToolIds()
+    const selectedOptions = toolOptions.value.filter(tool => selectedIds.has(Number(tool.id)))
+    toolOptions.value = []
+    mergeTools([...selectedOptions, ...(response.data?.data || [])])
   }
   catch {
     // Keep already selected options available when a remote search fails.
@@ -29,6 +47,61 @@ async function searchTools(query = '') {
   finally {
     toolLoading.value = false
   }
+}
+
+async function onToolDropdownVisible(visible) {
+  if (!visible) return
+  if (showCompareCascade.value && !props.form.categoryId) return
+  await searchTools('')
+}
+
+async function loadCategoryOptions() {
+  try {
+    const [level1Response, categoryResponse] = await Promise.all([
+      adminAxios.get('/api/admin/categories/level1-options'),
+      adminAxios.get('/api/admin/categories/options'),
+    ])
+    level1Options.value = level1Response.data?.data || []
+    categoryOptions.value = categoryResponse.data?.data || []
+    syncSelectedLevel1()
+  }
+  catch {
+    level1Options.value = []
+    categoryOptions.value = []
+  }
+}
+
+const filteredCategoryOptions = computed(() => categoryOptions.value.filter(
+  category => Number(category.level1Id) === Number(selectedLevel1Id.value),
+))
+
+function syncSelectedLevel1() {
+  const category = categoryOptions.value.find(item => Number(item.id) === Number(props.form.categoryId))
+  if (category) selectedLevel1Id.value = category.level1Id
+}
+
+function clearToolSelections() {
+  props.form.primaryToolId = ''
+  props.form.secondaryToolId = ''
+  props.form.alternativeToolIds = []
+  toolOptions.value = []
+}
+
+function onLevel1Change() {
+  props.form.categoryId = ''
+  clearToolSelections()
+}
+
+async function onCategoryChange() {
+  clearToolSelections()
+  if (props.form.categoryId) await searchTools()
+}
+
+function onPrimaryToolChange() {
+  if (Number(props.form.secondaryToolId) === Number(props.form.primaryToolId)) props.form.secondaryToolId = ''
+  props.form.alternativeToolIds = (props.form.alternativeToolIds || []).filter(
+    id => Number(id) !== Number(props.form.primaryToolId),
+  )
 }
 
 async function loadSelectedTools() {
@@ -49,16 +122,34 @@ async function loadSelectedTools() {
 }
 
 function toolLabel(tool) {
-  const categories = (tool.categoryNames || []).join('、')
-  return `${tool.name} / ${tool.handle}${categories ? ` / ${categories}` : ''}`
+  return tool.name
 }
 
 onMounted(async () => {
+  await loadCategoryOptions()
   await Promise.all([searchTools(), loadSelectedTools()])
+})
+
+watch(() => props.form.categoryId, syncSelectedLevel1)
+watch(contentType, (type, previousType) => {
+  if (previousType && type !== previousType) selectedLevel1Id.value = ''
 })
 </script>
 
 <template>
+  <template v-if="showCompareCascade">
+    <el-form-item label="一级分类" required>
+      <el-select v-model="selectedLevel1Id" clearable filterable style="width: 100%" :disabled="disabled" @change="onLevel1Change">
+        <el-option v-for="category in level1Options" :key="category.id" :label="category.name" :value="category.id" />
+      </el-select>
+    </el-form-item>
+    <el-form-item label="二级分类" required>
+      <el-select v-model="form.categoryId" clearable filterable style="width: 100%" :disabled="disabled || !selectedLevel1Id" @change="onCategoryChange">
+        <el-option v-for="category in filteredCategoryOptions" :key="category.id" :label="category.name" :value="category.id" />
+      </el-select>
+    </el-form-item>
+  </template>
+
   <template v-if="showCommonSeo && !compact">
     <el-form-item label="目标关键词" required>
       <el-input v-model="form.targetKeyword" :disabled="disabled" />
@@ -76,7 +167,7 @@ onMounted(async () => {
 
   <template v-if="contentType === 'BUYER_GUIDE' && !compact">
     <el-form-item label="入选工具" required>
-      <el-select v-model="form.selectedToolIds" multiple filterable remote clearable collapse-tags style="width: 100%" :disabled="disabled" :loading="toolLoading" :remote-method="searchTools">
+      <el-select v-model="form.selectedToolIds" multiple filterable clearable collapse-tags style="width: 100%" :disabled="disabled" :loading="toolLoading" :filter-method="searchTools" @visible-change="onToolDropdownVisible">
         <el-option v-for="tool in toolOptions" :key="tool.id" :label="toolLabel(tool)" :value="tool.id" />
       </el-select>
     </el-form-item>
@@ -87,7 +178,7 @@ onMounted(async () => {
 
   <template v-if="contentType === 'TUTORIAL'">
     <el-form-item label="主工具" required>
-      <el-select v-model="form.primaryToolId" filterable remote clearable style="width: 100%" :disabled="disabled" :loading="toolLoading" :remote-method="searchTools">
+      <el-select v-model="form.primaryToolId" filterable clearable style="width: 100%" :disabled="disabled" :loading="toolLoading" :filter-method="searchTools" @visible-change="onToolDropdownVisible">
         <el-option v-for="tool in toolOptions" :key="tool.id" :label="toolLabel(tool)" :value="tool.id" />
       </el-select>
     </el-form-item>
@@ -110,13 +201,13 @@ onMounted(async () => {
 
   <template v-if="contentType === 'COMPARISON'">
     <el-form-item label="主工具" required>
-      <el-select v-model="form.primaryToolId" filterable remote clearable style="width: 100%" :disabled="disabled" :loading="toolLoading" :remote-method="searchTools">
+      <el-select v-model="form.primaryToolId" filterable clearable style="width: 100%" :disabled="disabled || !form.categoryId" :loading="toolLoading" :filter-method="searchTools" @change="onPrimaryToolChange" @visible-change="onToolDropdownVisible">
         <el-option v-for="tool in toolOptions" :key="tool.id" :label="toolLabel(tool)" :value="tool.id" />
       </el-select>
     </el-form-item>
     <el-form-item label="对比工具" required>
-      <el-select v-model="form.secondaryToolId" filterable remote clearable style="width: 100%" :disabled="disabled" :loading="toolLoading" :remote-method="searchTools">
-        <el-option v-for="tool in toolOptions" :key="tool.id" :label="toolLabel(tool)" :value="tool.id" />
+      <el-select v-model="form.secondaryToolId" filterable clearable style="width: 100%" :disabled="disabled || !form.categoryId" :loading="toolLoading" :filter-method="searchTools" @visible-change="onToolDropdownVisible">
+        <el-option v-for="tool in toolOptions" :key="tool.id" :label="toolLabel(tool)" :value="tool.id" :disabled="Number(tool.id) === Number(form.primaryToolId)" />
       </el-select>
     </el-form-item>
     <el-form-item v-if="!compact" label="对比意图" required>
@@ -135,13 +226,13 @@ onMounted(async () => {
 
   <template v-if="contentType === 'ALTERNATIVE'">
     <el-form-item label="主工具" required>
-      <el-select v-model="form.primaryToolId" filterable remote clearable style="width: 100%" :disabled="disabled" :loading="toolLoading" :remote-method="searchTools">
+      <el-select v-model="form.primaryToolId" filterable clearable style="width: 100%" :disabled="disabled || !form.categoryId" :loading="toolLoading" :filter-method="searchTools" @change="onPrimaryToolChange" @visible-change="onToolDropdownVisible">
         <el-option v-for="tool in toolOptions" :key="tool.id" :label="toolLabel(tool)" :value="tool.id" />
       </el-select>
     </el-form-item>
     <el-form-item v-if="!compact" label="替代工具" required>
-      <el-select v-model="form.alternativeToolIds" multiple filterable remote clearable collapse-tags style="width: 100%" :disabled="disabled" :loading="toolLoading" :remote-method="searchTools">
-        <el-option v-for="tool in toolOptions" :key="tool.id" :label="toolLabel(tool)" :value="tool.id" />
+      <el-select v-model="form.alternativeToolIds" multiple filterable clearable collapse-tags style="width: 100%" :disabled="disabled || !form.categoryId" :loading="toolLoading" :filter-method="searchTools" @visible-change="onToolDropdownVisible">
+        <el-option v-for="tool in toolOptions" :key="tool.id" :label="toolLabel(tool)" :value="tool.id" :disabled="Number(tool.id) === Number(form.primaryToolId)" />
       </el-select>
     </el-form-item>
     <el-form-item v-if="!compact" label="切换原因" required>
