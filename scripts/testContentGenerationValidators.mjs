@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { validateGeneratedContentPage } from '../server/services/contentGeneration/validators.js'
+import { PRODUCTION_LIMITS } from '../server/services/contentGeneration/editorialRules.js'
 import { enforceInputContract } from '../server/services/contentGeneration/inputContracts.js'
 import { applyPromptTemplate } from '../server/services/contentGeneration/prompts.js'
 import { buildSourceMap, compactToolFacts } from '../server/services/contentGeneration/sourceSelectors.js'
@@ -169,6 +170,22 @@ assert.equal(compareValidation.score >= 85, true)
 assert.equal(guideValidation.normalizedSources.length, 6)
 assert.equal(compareValidation.normalizedSources.length, 2)
 assert.equal(compareValidation.warnings.filter(message => message.startsWith('Unused source:')).length, 4)
+assert.deepEqual(PRODUCTION_LIMITS.comparison, { minWords: 1800, maxWords: 3000 })
+assert.equal(PRODUCTION_LIMITS.compare.minWords, 1500)
+assert.equal(PRODUCTION_LIMITS.compare.maxWords, 2500)
+
+const comparisonWithinNewWordRange = structuredClone(compare)
+comparisonWithinNewWordRange.bodyJson.blocks.find(block => block.type === 'methodology').text += ` ${exactWords(2725 - compareValidation.metrics.wordCount)}`
+const comparisonWithinNewWordRangeValidation = validateGeneratedContentPage(comparisonWithinNewWordRange, compareSource)
+assert.equal(comparisonWithinNewWordRangeValidation.metrics.wordCount, 2725)
+assert.equal(comparisonWithinNewWordRangeValidation.checks.wordCount.passed, true)
+
+const comparisonOverNewWordRange = structuredClone(comparisonWithinNewWordRange)
+comparisonOverNewWordRange.bodyJson.blocks.find(block => block.type === 'methodology').text += ` ${exactWords(276)}`
+const comparisonOverNewWordRangeValidation = validateGeneratedContentPage(comparisonOverNewWordRange, compareSource)
+assert.equal(comparisonOverNewWordRangeValidation.metrics.wordCount, 3001)
+assert.equal(comparisonOverNewWordRangeValidation.checks.wordCount.passed, false)
+assert.equal(comparisonOverNewWordRangeValidation.checks.wordCount.expected, '1800-3000')
 
 const dynamicBestFor = structuredClone(compare)
 dynamicBestFor.bodyJson.blocks[4].heading = 'Best For Tool 1'

@@ -53,6 +53,10 @@ export const PRODUCTION_LIMITS = {
     maxFaqAnswerWords: 100,
     minVerdictWords: 80,
   },
+  comparison: {
+    minWords: 1800,
+    maxWords: 3000,
+  },
 }
 
 export const FORBIDDEN_CLAIM_LABELS = [
@@ -296,9 +300,24 @@ export const compareContentRules = {
   ],
 }
 
+export const comparisonContentRules = {
+  ...compareContentRules,
+  allowedTypes: ['COMPARISON'],
+  depth: {
+    ...compareContentRules.depth,
+    ...PRODUCTION_LIMITS.comparison,
+  },
+  requirements: compareContentRules.requirements.map(rule => (
+    rule.startsWith('Target 1,900-2,300 English editorial words.')
+      ? 'Write 1,800-3,000 English editorial words.'
+      : rule
+  )),
+}
+
 export const contentRules = {
   shared: sharedContentRules,
   guides: guideContentRules,
   buyerGuide: buyerGuideContentRules,
   compare: compareContentRules,
+  comparison: comparisonContentRules,
 }

@@ -133,6 +133,11 @@ export function buildGuideUserPrompt(sourceData) {
 
 export function buildCompareUserPrompt(sourceData) {
   const source = sourceData.aiInput
+  const isComparison = sourceData.contentType === 'COMPARISON'
+  const limits = isComparison
+    ? { ...PRODUCTION_LIMITS.compare, ...PRODUCTION_LIMITS.comparison }
+    : PRODUCTION_LIMITS.compare
+  const rules = isComparison ? contentRules.comparison : contentRules.compare
   return [
     `Generate a ${sourceData.contentType} production-ready SEO comparison draft as JSON.`,
     `Prompt version: ${COMPARE_PRODUCTION_PROMPT_VERSION}.`,
@@ -141,32 +146,34 @@ export function buildCompareUserPrompt(sourceData) {
     JSON.stringify(contentRules.shared, null, 2),
     '',
     'Compare production rules:',
-    JSON.stringify(contentRules.compare, null, 2),
+    JSON.stringify(rules, null, 2),
     '',
     'Content-type task instructions:',
     JSON.stringify(TASK_INSTRUCTIONS[sourceData.contentType], null, 2),
     '',
     'Non-negotiable validation targets:',
-    `- ideal total length ${PRODUCTION_LIMITS.compare.idealMinWords}-${PRODUCTION_LIMITS.compare.idealMaxWords} English editorial words; hard range ${PRODUCTION_LIMITS.compare.minWords}-${PRODUCTION_LIMITS.compare.maxWords}`,
-    `- ${PRODUCTION_LIMITS.compare.minBlocks}-${PRODUCTION_LIMITS.compare.maxBlocks} body blocks`,
-    sourceData.contentType === 'COMPARISON'
-      ? `- at least ${PRODUCTION_LIMITS.compare.minMatrixRows} matrix rows`
+    isComparison
+      ? `- ${limits.minWords}-${limits.maxWords} English editorial words`
+      : `- ideal total length ${limits.idealMinWords}-${limits.idealMaxWords} English editorial words; hard range ${limits.minWords}-${limits.maxWords}`,
+    `- ${limits.minBlocks}-${limits.maxBlocks} body blocks`,
+    isComparison
+      ? `- at least ${limits.minMatrixRows} matrix rows`
       : '- include at least one grounded alternative tool distinct from the primary tool',
-    `- at least ${PRODUCTION_LIMITS.compare.minCriteria} meaningful criteria`,
-    `- at least ${PRODUCTION_LIMITS.compare.minFaqItems} FAQ items`,
-    `- each section ${PRODUCTION_LIMITS.compare.minSectionWords}-${PRODUCTION_LIMITS.compare.maxSectionWords} words; prefer ${PRODUCTION_LIMITS.compare.recommendedMinSectionWords}-${PRODUCTION_LIMITS.compare.maxSectionWords}`,
-    `- each FAQ answer ${PRODUCTION_LIMITS.compare.minFaqAnswerWords}-${PRODUCTION_LIMITS.compare.maxFaqAnswerWords} words; do not expand already compliant FAQ answers`,
-    `- verdict >= ${PRODUCTION_LIMITS.compare.minVerdictWords} words and scenario-specific`,
+    `- at least ${limits.minCriteria} meaningful criteria`,
+    `- at least ${limits.minFaqItems} FAQ items`,
+    `- each section ${limits.minSectionWords}-${limits.maxSectionWords} words; prefer ${limits.recommendedMinSectionWords}-${limits.maxSectionWords}`,
+    `- each FAQ answer ${limits.minFaqAnswerWords}-${limits.maxFaqAnswerWords} words; do not expand already compliant FAQ answers`,
+    `- verdict >= ${limits.minVerdictWords} words and scenario-specific`,
     '- Criteria Analysis: 1-2 sentences per dimension. Do not restate matrix rows as long paragraphs.',
     '- Use explicit headings "Best For {primaryTool.name}" and "Best For {secondaryTool.name}" for the two buyer-fit sections.',
     '- Never write guarantee, guaranteed, or guarantee rankings. Use help, support, improve, reduce risk, increase likelihood, may help, is designed to, support SEO workflows, or improve the optimization process.',
     '- contentPage.status = REVIEW and robots = NOINDEX_FOLLOW',
-    sourceData.contentType === 'COMPARISON'
+    isComparison
       ? '- comparisonPage.matrixJson must be an array of rows or an object containing a rows array'
       : '- alternativePage.selectionCriteriaJson must be an array or an object containing a criteria array',
     '',
     'Block shape reference:',
-    JSON.stringify(contentRules.compare.blockSchemas, null, 2),
+    JSON.stringify(rules.blockSchemas, null, 2),
     '',
     'Required output shape:',
     JSON.stringify(buildCompareShapeExample(sourceData), null, 2),

@@ -232,8 +232,10 @@ export function validateGeneratedContentPage(page, sourceData = null) {
   const pageType = meta?.type
   const isGuide = GUIDE_TYPES.has(pageType)
   const isCompare = COMPARE_TYPES.has(pageType)
-  const limits = isCompare
-    ? PRODUCTION_LIMITS.compare
+  const limits = pageType === 'COMPARISON'
+    ? { ...PRODUCTION_LIMITS.compare, ...PRODUCTION_LIMITS.comparison }
+    : isCompare
+      ? PRODUCTION_LIMITS.compare
     : pageType === 'BUYER_GUIDE' ? PRODUCTION_LIMITS.buyerGuide : PRODUCTION_LIMITS.guide
 
   validateSchema(page, sourceData, errors)
