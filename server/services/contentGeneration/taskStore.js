@@ -1,5 +1,5 @@
 import { createError } from 'h3'
-import prisma from '~/server/utils/prisma'
+import prisma from '../../utils/prisma.js'
 
 export const CONTENT_GENERATION_STATUSES = [
   'draft',
@@ -73,11 +73,110 @@ function fromDbContentType(value) {
   return DB_TO_CONTENT_TYPE[value] || String(value || '').toLowerCase()
 }
 
+function targetTypeForContentType(contentType) {
+  return ['COMPARISON', 'ALTERNATIVE'].includes(String(contentType || '').toUpperCase()) ? 'compare' : 'guides'
+}
+
 function normalizeJson(value) {
   if (value === undefined || value === '') {
     return null
   }
   return value
+}
+
+const BRIEF_FIELDS = [
+  'selectedToolIds', 'targetKeyword', 'pageGoal', 'searchIntent', 'audience', 'decisionCriteria',
+  'primaryToolId', 'tutorialGoal', 'workflowContext', 'prerequisiteKnowledge', 'outputChecklist', 'commonMistakes',
+  'secondaryToolId', 'comparisonIntent', 'targetAudience', 'alternativeToolIds', 'reasonToSwitch',
+  'selectionCriteria', 'representativeToolIds', 'relatedToolIds', 'sharedUseCases',
+  'comparisonDimensions', 'featureComparisonFacts', 'pricingComparisonFacts', 'pricingSummary', 'categoryContext',
+  'internalLinks', 'autoSelectSecondaryTool',
+]
+
+export function promptJsonWithBrief(input, currentPromptJson = null) {
+  const supplied = input.promptJson ?? input.prompt_json
+  const current = currentPromptJson && typeof currentPromptJson === 'object' ? currentPromptJson : {}
+  const incoming = supplied && typeof supplied === 'object' ? supplied : {}
+  const base = { ...current, ...incoming }
+  const existingBrief = base.brief && typeof base.brief === 'object'
+    ? base.brief
+    : base.input && typeof base.input === 'object' ? base.input : {}
+  const topLevelBrief = Object.fromEntries(BRIEF_FIELDS
+    .filter(field => input[field] !== undefined)
+    .map(field => [field, input[field]]))
+  const suppliedBrief = supplied?.brief && typeof supplied.brief === 'object'
+    ? supplied.brief
+    : supplied?.input && typeof supplied.input === 'object' ? supplied.input : {}
+  const hasBriefInput = Object.keys(topLevelBrief).length || Object.keys(suppliedBrief).length
+  if (!hasBriefInput && supplied === undefined) return currentPromptJson
+  const { input: _legacyInput, ...promptMetadata } = base
+  return { ...promptMetadata, brief: { ...existingBrief, ...suppliedBrief, ...topLevelBrief } }
+}
+
+function validateTaskBrief(contentType, promptJson, categoryId) {
+  const type = String(contentType || '').trim().toUpperCase()
+  const brief = promptJson?.brief && typeof promptJson.brief === 'object' ? promptJson.brief : {}
+  const missing = []
+  const requireValue = (field) => {
+    const value = brief[field]
+    if (value == null || value === '' || (Array.isArray(value) && !value.length)) missing.push(field)
+  }
+  const requireCount = (field, count) => {
+    if (!Array.isArray(brief[field]) || brief[field].length < count) missing.push(`${field}(min:${count})`)
+  }
+
+  if (['BUYER_GUIDE', 'CATEGORY_GUIDE', 'TUTORIAL'].includes(type)) {
+    for (const field of ['targetKeyword', 'pageGoal', 'searchIntent', 'audience']) requireValue(field)
+  }
+  if (type === 'BUYER_GUIDE') {
+    requireCount('selectedToolIds', 5)
+    requireCount('decisionCriteria', 5)
+  }
+  if (type === 'CATEGORY_GUIDE' && !Number(categoryId)) missing.push('categoryId')
+  if (type === 'TUTORIAL') {
+    for (const field of ['primaryToolId', 'tutorialGoal', 'workflowContext', 'outputChecklist']) requireValue(field)
+  }
+  if (type === 'COMPARISON') {
+    for (const field of ['primaryToolId', 'secondaryToolId', 'comparisonIntent', 'targetAudience']) requireValue(field)
+    requireCount('decisionCriteria', 6)
+    if (brief.primaryToolId && Number(brief.primaryToolId) === Number(brief.secondaryToolId)) missing.push('secondaryToolId(distinct)')
+  }
+  if (type === 'ALTERNATIVE') {
+    for (const field of ['primaryToolId', 'reasonToSwitch']) requireValue(field)
+    requireCount('alternativeToolIds', 2)
+    requireCount('selectionCriteria', 5)
+    if ((brief.alternativeToolIds || []).some(id => Number(id) === Number(brief.primaryToolId))) missing.push('alternativeToolIds(excludePrimary)')
+  }
+  if (missing.length) {
+    throw createError({ statusCode: 400, statusMessage: `invalidPromptBrief: ${[...new Set(missing)].join(', ')}` })
+  }
+}
+
+async function validateCompareToolCategories(contentType, categoryId, toolId, promptJson) {
+  const type = String(contentType || '').toUpperCase()
+  if (!['COMPARISON', 'ALTERNATIVE'].includes(type)) return
+  const normalizedCategoryId = Number(categoryId) || null
+  if (!normalizedCategoryId) {
+    throw createError({ statusCode: 400, statusMessage: 'Compare 内容必须选择二级分类' })
+  }
+
+  const brief = promptJson?.brief && typeof promptJson.brief === 'object' ? promptJson.brief : {}
+  const toolIds = [...new Set([
+    Number(brief.primaryToolId || toolId) || null,
+    type === 'COMPARISON' ? Number(brief.secondaryToolId) || null : null,
+    ...(type === 'ALTERNATIVE' ? (brief.alternativeToolIds || []).map(Number) : []),
+  ].filter(Boolean))]
+  if (!toolIds.length) return
+
+  const assignments = await prisma.aiToolCategory.findMany({
+    where: { categoryId: normalizedCategoryId, aiToolId: { in: toolIds } },
+    select: { aiToolId: true },
+  })
+  const assignedIds = new Set(assignments.map(row => row.aiToolId))
+  const invalidIds = toolIds.filter(id => !assignedIds.has(id))
+  if (invalidIds.length) {
+    throw createError({ statusCode: 400, statusMessage: `工具不属于所选二级分类：${invalidIds.join(', ')}` })
+  }
 }
 
 function normalizeOptionalNumber(value) {
@@ -243,30 +342,34 @@ export async function listContentGenerationTasksByIds(ids = []) {
 }
 
 export async function createContentGenerationTask(input, auth) {
-  const title = String(input.title || '').trim()
-  if (!title) {
-    throw createError({ statusCode: 400, statusMessage: '任务标题必填' })
-  }
-
   const status = normalizeStatus(input.status || 'draft')
   if (!status) {
     throw createError({ statusCode: 400, statusMessage: '任务状态无效' })
   }
+  const contentType = toDbContentType(input.contentType || input.content_type)
+  const title = String(input.title || '').trim() || `${contentType} draft`
+  const categoryId = normalizeOptionalNumber(input.categoryId ?? input.category_id)
+  const promptJson = promptJsonWithBrief(input)
+  if (status !== 'draft' && promptJson?.brief && Object.keys(promptJson.brief).length) {
+    validateTaskBrief(contentType, promptJson, categoryId)
+  }
+  const toolId = normalizeOptionalNumber(input.toolId ?? input.tool_id)
+  await validateCompareToolCategories(contentType, categoryId, toolId, promptJson)
 
   const created = await prisma.$transaction(async (tx) => {
     const row = await tx.contentGenerationTask.create({
       data: {
         title,
         slug: String(input.slug || '').trim() || null,
-        contentType: toDbContentType(input.contentType || input.content_type),
-        targetType: String(input.targetType || input.target_type || '').trim() || null,
-        categoryId: normalizeOptionalNumber(input.categoryId ?? input.category_id),
-        toolId: normalizeOptionalNumber(input.toolId ?? input.tool_id),
+        contentType,
+        targetType: targetTypeForContentType(contentType),
+        categoryId,
+        toolId,
         limitCount: normalizeLimit(input.limit ?? input.limitCount ?? input.limit_count),
         status: STATUS_TO_DB[status],
         sourceDataJson: normalizeJson(input.sourceDataJson ?? input.source_data_json),
         promptVersionId: normalizeOptionalNumber(input.promptVersionId ?? input.prompt_version_id),
-        promptJson: normalizeJson(input.promptJson ?? input.prompt_json),
+        promptJson: normalizeJson(promptJson),
         rawOutput: typeof input.rawOutput === 'string' ? input.rawOutput : '',
         generatedContentJson: normalizeJson(input.generatedContent ?? input.generated_content),
         finalContentJson: normalizeJson(input.finalContent ?? input.final_content ?? input.contentJson ?? input.content_json),
@@ -301,7 +404,10 @@ export async function updateContentGenerationTask(id, input, auth) {
     data.contentType = toDbContentType(input.contentType ?? input.content_type)
   }
   if (input.targetType !== undefined || input.target_type !== undefined) {
-    data.targetType = String((input.targetType ?? input.target_type) || '').trim() || null
+    data.targetType = targetTypeForContentType(data.contentType || current.contentType)
+  }
+  else if (data.contentType !== undefined) {
+    data.targetType = targetTypeForContentType(data.contentType)
   }
   if (input.categoryId !== undefined || input.category_id !== undefined) {
     data.categoryId = normalizeOptionalNumber(input.categoryId ?? input.category_id)
@@ -324,8 +430,8 @@ export async function updateContentGenerationTask(id, input, auth) {
   if (input.sourceDataJson !== undefined || input.source_data_json !== undefined) {
     data.sourceDataJson = normalizeJson(input.sourceDataJson ?? input.source_data_json)
   }
-  if (input.promptJson !== undefined || input.prompt_json !== undefined) {
-    data.promptJson = normalizeJson(input.promptJson ?? input.prompt_json)
+  if (input.promptJson !== undefined || input.prompt_json !== undefined || BRIEF_FIELDS.some(field => input[field] !== undefined)) {
+    data.promptJson = normalizeJson(promptJsonWithBrief(input, current.promptJson))
   }
   if (input.promptVersionId !== undefined || input.prompt_version_id !== undefined) {
     data.promptVersionId = normalizeOptionalNumber(input.promptVersionId ?? input.prompt_version_id)
@@ -341,6 +447,18 @@ export async function updateContentGenerationTask(id, input, auth) {
   }
   if (!Object.keys(data).length) {
     return serializeTask(current)
+  }
+  if ((data.promptJson?.brief && Object.keys(data.promptJson.brief).length) || (data.contentType !== undefined && current.promptJson?.brief)) {
+    validateTaskBrief(data.contentType || current.contentType, data.promptJson ?? current.promptJson, data.categoryId ?? current.categoryId)
+  }
+  const compareSelectionChanged = ['contentType', 'categoryId', 'toolId', 'promptJson'].some(field => data[field] !== undefined)
+  if (compareSelectionChanged) {
+    await validateCompareToolCategories(
+      data.contentType || current.contentType,
+      data.categoryId !== undefined ? data.categoryId : current.categoryId,
+      data.toolId !== undefined ? data.toolId : current.toolId,
+      data.promptJson !== undefined ? data.promptJson : current.promptJson,
+    )
   }
   if (data.title !== undefined && !data.title) {
     throw createError({ statusCode: 400, statusMessage: '任务标题必填' })

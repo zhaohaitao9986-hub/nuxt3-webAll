@@ -1,9 +1,13 @@
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
+import ContentGenerationBriefFields from '~/components/contentGeneration/ContentGenerationBriefFields.vue'
 import {
   CONTENT_GENERATION_STATUS_OPTIONS,
+  buildContentGenerationBrief,
   contentGenerationStatusLabel,
   contentGenerationStatusType,
+  contentGenerationTargetType,
+  createContentGenerationBriefForm,
 } from '~/utils/contentGeneration'
 
 definePageMeta({
@@ -30,16 +34,17 @@ const statusLoading = reactive({})
 const selectedRows = ref([])
 const batchLoading = ref(false)
 const categoryOptions = ref([])
-const toolOptions = ref([])
 
 const createVisible = ref(false)
 const createSaving = ref(false)
+const briefPreparing = ref(false)
 const createFormRef = ref(null)
 const createForm = reactive({
+  ...createContentGenerationBriefForm(),
   title: '',
   slug: '',
   contentType: 'BUYER_GUIDE',
-  targetType: 'guide',
+  targetType: 'guides',
   categoryId: '',
   toolId: '',
   limit: 5,
@@ -47,7 +52,6 @@ const createForm = reactive({
 })
 
 const createRules = {
-  title: [{ required: true, message: '请输入任务标题', trigger: 'blur' }],
 }
 
 function statusLabel(status) {
@@ -106,16 +110,13 @@ async function loadList() {
 
 async function loadOptions() {
   try {
-    const [categoriesRes, toolsRes] = await Promise.all([
+    const [categoriesRes] = await Promise.all([
       adminAxios.get('/api/admin/categories/options'),
-      adminAxios.get('/api/admin/tools', { params: { page: 1, pageSize: 100, toolStatus: 'ACTIVE' } }),
     ])
     categoryOptions.value = categoriesRes.data?.data || []
-    toolOptions.value = toolsRes.data?.data || []
   }
   catch {
     categoryOptions.value = []
-    toolOptions.value = []
   }
 }
 
@@ -191,10 +192,11 @@ async function batchGenerateTasks() {
 }
 
 function openCreate() {
+  Object.assign(createForm, createContentGenerationBriefForm())
   createForm.title = ''
   createForm.slug = ''
   createForm.contentType = 'BUYER_GUIDE'
-  createForm.targetType = 'guide'
+  createForm.targetType = 'guides'
   createForm.categoryId = ''
   createForm.toolId = ''
   createForm.limit = 5
@@ -203,7 +205,14 @@ function openCreate() {
   nextTick(() => createFormRef.value?.clearValidate?.())
 }
 
-async function submitCreate() {
+function validatePrepareSeed() {
+  const type = String(createForm.contentType).toUpperCase()
+  if (['BUYER_GUIDE', 'CATEGORY_GUIDE', 'COMPARISON', 'ALTERNATIVE'].includes(type) && !createForm.categoryId) return '请选择二级分类'
+  if (['TUTORIAL', 'COMPARISON', 'ALTERNATIVE'].includes(type) && !createForm.primaryToolId) return '请选择主工具'
+  return ''
+}
+
+async function submitCreate(prepareBrief = false) {
   try {
     await createFormRef.value?.validate?.()
   }
@@ -213,16 +222,35 @@ async function submitCreate() {
 
   createSaving.value = true
   try {
-    await adminAxios.post('/api/admin/content-generation/tasks', {
+    if (prepareBrief) {
+      const seedError = validatePrepareSeed()
+      if (seedError) throw new Error(seedError)
+      briefPreparing.value = true
+    }
+    const response = await adminAxios.post('/api/admin/content-generation/tasks', {
       title: createForm.title.trim(),
       slug: createForm.slug.trim(),
       contentType: createForm.contentType.trim(),
       targetType: createForm.targetType.trim(),
       categoryId: createForm.categoryId || null,
-      toolId: createForm.toolId || null,
+      toolId: createForm.primaryToolId || createForm.toolId || null,
       limit: createForm.limit,
       status: createForm.status,
+      promptJson: { brief: buildContentGenerationBrief(createForm) },
     })
+    if (prepareBrief) {
+      await adminAxios.post(`/api/admin/content-generation/tasks/${response.data.id}/prepare-brief`, {
+        contentType: createForm.contentType,
+        categoryId: createForm.categoryId || null,
+        primaryToolId: createForm.primaryToolId || null,
+        secondaryToolId: createForm.secondaryToolId || null,
+      })
+      ElMessage.success('任务已创建，Brief 已自动生成')
+      createVisible.value = false
+      await loadList()
+      router.push(`/admin/content-generation/${response.data.id}`)
+      return
+    }
     ElMessage.success('已创建')
     createVisible.value = false
     await loadList()
@@ -235,6 +263,7 @@ async function submitCreate() {
   }
   finally {
     createSaving.value = false
+    briefPreparing.value = false
   }
 }
 
@@ -276,6 +305,14 @@ async function changeStatus(row, status) {
 onMounted(() => {
   loadOptions()
   loadList()
+})
+
+watch(() => createForm.contentType, (contentType) => {
+  createForm.targetType = contentGenerationTargetType(contentType)
+  createForm.categoryId = ''
+  createForm.primaryToolId = ''
+  createForm.secondaryToolId = ''
+  createForm.alternativeToolIds = []
 })
 </script>
 
@@ -405,8 +442,8 @@ onMounted(() => {
       destroy-on-close
     >
       <el-form ref="createFormRef" :model="createForm" :rules="createRules" label-width="92px">
-        <el-form-item label="任务标题" prop="title">
-          <el-input v-model="createForm.title" placeholder="例如：AI 写作工具 Buyer Guide" />
+        <el-form-item label="任务标题">
+          <el-input v-model="createForm.title" placeholder="可选，未填写时自动生成草稿标题" />
         </el-form-item>
         <el-form-item label="Slug">
           <el-input v-model="createForm.slug" placeholder="ai-writing-tools-buyer-guide" />
@@ -421,9 +458,9 @@ onMounted(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="目标类型">
-          <el-input v-model="createForm.targetType" placeholder="guide / compare / alternative" />
+          <el-input v-model="createForm.targetType" readonly />
         </el-form-item>
-        <el-form-item label="分类">
+        <el-form-item v-if="!['COMPARISON', 'ALTERNATIVE'].includes(String(createForm.contentType).toUpperCase())" label="分类" :required="['BUYER_GUIDE', 'CATEGORY_GUIDE'].includes(String(createForm.contentType).toUpperCase())">
           <el-select
             v-model="createForm.categoryId"
             clearable
@@ -439,22 +476,7 @@ onMounted(() => {
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="工具">
-          <el-select
-            v-model="createForm.toolId"
-            clearable
-            filterable
-            placeholder="可选，指定主工具"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="tool in toolOptions"
-              :key="tool.id"
-              :label="tool.name"
-              :value="tool.id"
-            />
-          </el-select>
-        </el-form-item>
+        <ContentGenerationBriefFields :form="createForm" compact />
         <el-form-item label="数量">
           <el-input-number v-model="createForm.limit" :min="1" :max="30" style="width: 160px" />
         </el-form-item>
@@ -473,8 +495,11 @@ onMounted(() => {
         <el-button @click="createVisible = false">
           取消
         </el-button>
-        <el-button type="primary" :loading="createSaving" @click="submitCreate">
+        <el-button :loading="createSaving && !briefPreparing" @click="submitCreate(false)">
           创建
+        </el-button>
+        <el-button type="primary" :loading="briefPreparing" @click="submitCreate(true)">
+          AI 生成 Brief
         </el-button>
       </template>
     </el-dialog>

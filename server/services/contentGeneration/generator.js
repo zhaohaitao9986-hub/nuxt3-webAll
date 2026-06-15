@@ -1,20 +1,20 @@
 import { createError } from 'h3'
-import { callContentGenerationAi, callContentGenerationAiStream } from './aiClient'
+import { callContentGenerationAi, callContentGenerationAiStream } from './aiClient.js'
 import {
   getContentGenerationTask,
   saveContentGenerationTaskGenerationResult,
   updateContentGenerationTaskStatus,
-} from './taskStore'
-import { buildContentSourceData } from './sourceBuilder'
-import { buildContentPrompt, buildExpandFixPrompt } from './prompts'
+} from './taskStore.js'
+import { buildContentSourceData } from './sourceBuilder.js'
+import { buildContentPrompt, buildExpandFixPrompt } from './prompts.js'
 import {
   GENERATION_MODE,
   PRODUCTION_MAX_TOKENS,
   PRODUCTION_MODEL,
   PRODUCTION_TEMPERATURE,
   resolvePromptVersion,
-} from './promptVersion'
-import { validateGeneratedContentPage, validateSourceData } from './validators'
+} from './promptVersion.js'
+import { validateGeneratedContentPage, validateSourceData } from './validators.js'
 
 const EXPAND_RETRY_LIMIT = 1
 
@@ -50,6 +50,9 @@ function shouldExpand(validation) {
     'hasDecisionGuidance',
     'hasUseCases',
     'hasMethodology',
+    'forbiddenClaims',
+    'faqQuestionStyle',
+    'toolGrounding',
   ])
   return Object.entries(validation.checks || {}).some(([name, row]) => expandable.has(name) && row?.passed === false)
 }
@@ -127,6 +130,7 @@ export async function generateContentForTask(taskId, event, auth, streamHandlers
     await emit('phase', { phase: 'building_source' })
     sourceData = await buildContentSourceData(task)
     const sourceValidation = validateSourceData(sourceData)
+    validationResult = sourceValidation
     if (!sourceValidation.ok) throw new Error(`sourceData 校验失败：${sourceValidation.errors.join('；')}`)
 
     await emit('source', { sourceDataJson: sourceData })
@@ -202,6 +206,7 @@ export async function generateContentForTask(taskId, event, auth, streamHandlers
         sourceDataJson: sourceData,
         promptVersionId: promptVersion.id,
         promptJson: {
+          brief: promptVersion.brief,
           promptVersion: promptVersion.promptVersion,
           systemPrompt: promptVersion.systemPrompt,
           userPrompt: promptVersion.userPrompt,
@@ -219,6 +224,7 @@ export async function generateContentForTask(taskId, event, auth, streamHandlers
       sourceDataJson: sourceData,
       promptVersionId: promptVersion.id,
       promptJson: {
+        brief: promptVersion.brief,
         promptVersion: promptVersion.promptVersion,
         systemPrompt: promptVersion.systemPrompt,
         userPrompt: promptVersion.userPrompt,
@@ -264,7 +270,8 @@ export async function generateContentForTask(taskId, event, auth, streamHandlers
       sourceDataJson: sourceData,
       promptVersionId: promptVersion?.id,
       promptJson: promptVersion
-        ? {
+          ? {
+            brief: promptVersion.brief,
             promptVersion: promptVersion.promptVersion,
             systemPrompt: promptVersion.systemPrompt,
             userPrompt: promptVersion.userPrompt,

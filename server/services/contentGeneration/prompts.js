@@ -1,16 +1,17 @@
 import {
+  COMPARE_PRODUCTION_PROMPT_VERSION,
   FORBIDDEN_CLAIM_LABELS,
   META_LIMITS,
   PRODUCTION_LIMITS,
   PRODUCTION_PROMPT_VERSION,
   QUALITATIVE_PRICING_POLICY,
   contentRules,
-} from './editorialRules'
+} from './editorialRules.js'
 import {
   ALTERNATIVE_RESPONSE_SHAPE,
   COMPARE_RESPONSE_SHAPE,
   GUIDE_RESPONSE_SHAPE,
-} from './responseSchemas'
+} from './responseSchemas.js'
 
 export const editorialSystemPrompt = [
   'You are the production editorial content generation engine for AISeekTools.',
@@ -24,125 +25,42 @@ export const editorialSystemPrompt = [
   'Set contentPage.status to REVIEW and contentPage.robots to NOINDEX_FOLLOW.',
 ].join('\n')
 
-function compactPlan(plan) {
-  return {
-    planName: plan.planName,
-    billingInterval: plan.billingInterval,
-    isFree: plan.isFree,
-    hasTrial: plan.hasTrial,
-    seatLimit: plan.seatLimit,
-    usageLimit: plan.usageLimit,
-    features: (plan.features || []).slice(0, 8),
-    rawText: plan.rawText ? String(plan.rawText).slice(0, 600) : null,
-  }
+const TASK_INSTRUCTIONS = {
+  BUYER_GUIDE: [
+    'Help the stated audience choose among selectedTools using the supplied decisionCriteria.',
+    'Recommend only selectedTools and ground every recommendation in the matching toolFacts entry.',
+    'Only recommend tools from selectedTools in tool_callout blocks.',
+    'Do not introduce tools outside selectedTools except in a clearly labeled alternatives/fallback section when fallbackTools are supplied.',
+    'Fallback tools are related alternatives only; they must not be framed as primary recommendations.',
+    'Prioritize tools with STRONG relevance. If a MEDIUM tool is used, explain its limitation clearly.',
+    'Each selectedTools item includes categoryRelevanceScore, relevanceLabel, matchedCategories, and selectionReason; use those fields to justify fit.',
+  ],
+  CATEGORY_GUIDE: [
+    'Explain the category using categoryContext as the primary evidence.',
+    'Use representativeTools only as concise examples; do not turn the page into a ranked buyer list.',
+    'Tool callouts are optional and must not be forced to five items.',
+  ],
+  TUTORIAL: [
+    'Teach the exact tutorialGoal using the supplied workflowContext in order.',
+    'Do not invent product steps or substitute generic category guidance.',
+    'The primaryTool is the workflow anchor; relatedTools are optional supporting references, not recommendations.',
+  ],
+  COMPARISON: [
+    'Compare exactly primaryTool and secondaryTool for comparisonIntent and targetAudience.',
+    'Do not introduce other tools as comparison subjects.',
+  ],
+  ALTERNATIVE: [
+    'Explain alternatives to primaryTool for the supplied reasonToSwitch.',
+    'Recommend only alternativeTools and use selectionCriteria and comparisonDimensions for trade-offs.',
+    'Do not model the first alternative as a secondaryTool.',
+  ],
 }
 
-function compactClaim(claim) {
+function guideRulesFor(contentType) {
+  if (contentType === 'BUYER_GUIDE') return contentRules.buyerGuide
   return {
-    claimType: claim.claimType,
-    claimText: claim.claimText,
-    confidence: claim.confidence,
-    status: claim.status,
-  }
-}
-
-function compactTool(tool) {
-  return {
-    id: tool.id,
-    slug: tool.handle,
-    handle: tool.handle,
-    name: tool.name,
-    website: tool.website,
-    description: tool.description ? String(tool.description).slice(0, 700) : null,
-    whatIsSummary: tool.whatIsSummary ? String(tool.whatIsSummary).slice(0, 700) : null,
-    pricingSummary: (tool.pricing || []).slice(0, 6).map(value => String(value).slice(0, 500)),
-    pricingPlans: (tool.pricingPlans || []).slice(0, 6).map(compactPlan),
-    keyClaims: (tool.claims || []).slice(0, 10).map(compactClaim),
-    features: (tool.features || []).slice(0, 12),
-    pros: (tool.pros || []).slice(0, 8),
-    cons: (tool.cons || []).slice(0, 8),
-    platforms: (tool.platforms || []).slice(0, 10),
-    tags: (tool.tags || []).slice(0, 10),
-    useCases: (tool.useCases || []).slice(0, 10),
-    forJobs: (tool.forJobs || []).slice(0, 10),
-    rating: tool.rating,
-    monthlyVisits: tool.monthlyVisits,
-    isFree: tool.isFree,
-    hasPricingContext: Boolean(tool.pricingPlans?.length || tool.pricing?.length),
-    hasClaims: Boolean(tool.claims?.length),
-    categoryRelevanceScore: tool.categoryRelevanceScore,
-    relevanceLabel: tool.relevanceLabel,
-    matchedCategories: (tool.matchedCategories || []).map((category) => ({
-      id: category.id,
-      name: category.name,
-      handle: category.handle,
-      level1Handle: category.level1Handle,
-    })),
-    selectionReason: tool.selectionReason,
-    isFallback: Boolean(tool.isFallback),
-  }
-}
-
-function compactCategory(category) {
-  if (!category) return null
-  return { id: category.id, name: category.name, handle: category.handle }
-}
-
-function compactGuideSource(sourceData) {
-  return {
-    task: sourceData.task,
-    contentType: sourceData.contentType,
-    slug: sourceData.slug,
-    canonicalPath: sourceData.canonicalPath,
-    language: sourceData.language,
-    audience: sourceData.audience,
-    intent: sourceData.intent,
-    category: sourceData.category
-      ? { level1: compactCategory(sourceData.category.level1), level2: compactCategory(sourceData.category.level2) }
-      : null,
-    relatedCategories: (sourceData.relatedCategories || []).map(compactCategory),
-    primaryTool: sourceData.primaryTool ? compactTool(sourceData.primaryTool) : null,
-    selectedTools: (sourceData.selectedTools || sourceData.tools || []).map(compactTool),
-    fallbackTools: (sourceData.fallbackTools || []).map(compactTool),
-    tools: (sourceData.tools || []).map(compactTool),
-    toolSelectionDiagnostics: sourceData.toolSelectionDiagnostics || null,
-    sources: sourceData.sources || [],
-    siteRules: sourceData.siteRules,
-    fieldPolicy: [
-      'Only recommend tools from selectedTools in tool_callout blocks.',
-      'Do not introduce tools outside selectedTools except in a clearly labeled alternatives/fallback section.',
-      'Fallback tools are related alternatives only; they must not be framed as primary recommendations.',
-      'Prioritize STRONG tools. If a MEDIUM tool is used, explain its limitation clearly.',
-      'Every tool note must use only that tool object.',
-      'If pricingPlans and pricingSummary are empty, do not mention plans, credits, seats, trials, or limits.',
-      'If keyClaims is empty, do not invent integrations, language counts, or performance claims.',
-      'Guide metadata must use category-level wording and must not list tool names.',
-      'Do not claim retrieval dates when sources.retrievedAt is null.',
-    ],
-  }
-}
-
-function compactCompareSource(sourceData) {
-  return {
-    task: sourceData.task,
-    contentType: sourceData.contentType,
-    comparisonType: sourceData.comparisonType,
-    slug: sourceData.slug,
-    canonicalPath: sourceData.canonicalPath,
-    language: sourceData.language,
-    primaryTool: sourceData.primaryTool ? compactTool(sourceData.primaryTool) : null,
-    secondaryTool: sourceData.secondaryTool ? compactTool(sourceData.secondaryTool) : null,
-    tools: (sourceData.tools || []).map(compactTool),
-    category: compactCategory(sourceData.category),
-    relatedCategories: (sourceData.relatedCategories || []).map(compactCategory),
-    requiredCriteria: sourceData.requiredCriteria || [],
-    sources: sourceData.sources || [],
-    fieldPolicy: [
-      'Compare pages may name compared tools in metadata.',
-      'Ground every matrix cell, criterion, pricing statement, pro, and con in the corresponding tool object.',
-      'If a tool has no pricing context, say pricing details require verification rather than inventing them.',
-      'Do not describe an unsupported universal winner; explain which tool fits each scenario.',
-    ],
+    ...contentRules.guides,
+    requirements: contentRules.guides.requirements.filter(rule => !/Recommend at least 5|tool_callout|How to choose|Recommended tools/i.test(rule)),
   }
 }
 
@@ -152,8 +70,47 @@ export function buildContentPrompt(sourceData) {
     : buildGuideUserPrompt(sourceData)
 }
 
+function compactToolSelectionDiagnostics(diagnostics) {
+  if (!diagnostics) return null
+  const {
+    candidateToolCount,
+    dedupedCandidateToolCount,
+    STRONG,
+    MEDIUM,
+    WEAK,
+    INVALID,
+    selectedToolsCount,
+    fallbackToolsCount,
+    toolSelectionStrategy,
+    selectedToolIds,
+    fallbackToolIds,
+  } = diagnostics
+  return {
+    candidateToolCount,
+    dedupedCandidateToolCount,
+    STRONG,
+    MEDIUM,
+    WEAK,
+    INVALID,
+    selectedToolsCount,
+    fallbackToolsCount,
+    toolSelectionStrategy,
+    selectedToolIds,
+    fallbackToolIds,
+  }
+}
+
 export function buildGuideUserPrompt(sourceData) {
-  const source = compactGuideSource(sourceData)
+  const source = sourceData.contentType === 'BUYER_GUIDE'
+    ? {
+        ...sourceData.aiInput,
+        selectedTools: sourceData.aiInput?.selectedTools || sourceData.selectedTools || [],
+        fallbackTools: sourceData.fallbackTools || [],
+        toolSelectionDiagnostics: compactToolSelectionDiagnostics(sourceData.toolSelectionDiagnostics),
+      }
+    : sourceData.aiInput
+  const requiresRecommendations = sourceData.contentType === 'BUYER_GUIDE'
+  const limits = requiresRecommendations ? PRODUCTION_LIMITS.buyerGuide : PRODUCTION_LIMITS.guide
   return [
     `Generate a ${sourceData.contentType} production-ready SEO draft as JSON.`,
     `Prompt version: ${PRODUCTION_PROMPT_VERSION}.`,
@@ -162,16 +119,29 @@ export function buildGuideUserPrompt(sourceData) {
     JSON.stringify(contentRules.shared, null, 2),
     '',
     'Guide production rules:',
-    JSON.stringify(contentRules.guides, null, 2),
+    JSON.stringify(guideRulesFor(sourceData.contentType), null, 2),
+    '',
+    'Content-type task instructions:',
+    JSON.stringify(TASK_INSTRUCTIONS[sourceData.contentType], null, 2),
     '',
     'Non-negotiable validation targets:',
-    `- ${PRODUCTION_LIMITS.guide.minWords}-${PRODUCTION_LIMITS.guide.maxWords} English editorial words`,
-    `- ${PRODUCTION_LIMITS.guide.minBlocks}-${PRODUCTION_LIMITS.guide.maxBlocks} body blocks`,
-    `- at least ${PRODUCTION_LIMITS.guide.minRecommendedTools} distinct tool_callout recommendations`,
-    `- at least ${PRODUCTION_LIMITS.guide.minFaqItems} FAQ items`,
-    `- each section >= ${PRODUCTION_LIMITS.guide.minSectionWords} words`,
-    `- each FAQ answer >= ${PRODUCTION_LIMITS.guide.minFaqAnswerWords} words`,
-    `- each tool_callout verdict >= ${PRODUCTION_LIMITS.guide.minToolNoteWords} words`,
+    `- ${limits.minWords}-${limits.maxWords} English editorial words`,
+    requiresRecommendations
+      ? `- target ${limits.targetMinBlocks}-${limits.targetMaxBlocks} body blocks; never exceed ${limits.maxBlocks}`
+      : `- ${limits.minBlocks}-${limits.maxBlocks} body blocks`,
+    requiresRecommendations
+      ? `- exactly ${limits.minRecommendedTools} distinct tool_callout recommendations, each ${limits.minToolNoteWords}-${limits.maxToolNoteWords} words`
+      : '- tool_callout blocks are optional; do not manufacture recommendations to meet a buyer-guide quota',
+    `- at least ${limits.minFaqItems} FAQ items`,
+    requiresRecommendations
+      ? `- each section ${limits.minSectionWords}-${limits.maxSectionWords} words`
+      : `- each section >= ${limits.minSectionWords} words`,
+    requiresRecommendations
+      ? `- each FAQ answer ${limits.minFaqAnswerWords}-${limits.maxFaqAnswerWords} words`
+      : `- each FAQ answer >= ${limits.minFaqAnswerWords} words`,
+    requiresRecommendations
+      ? '- feature claims must use exact facts from the matching toolFacts.allowedFeatures; raw description is context, not feature evidence'
+      : '',
     '- contentPage.status = REVIEW and robots = NOINDEX_FOLLOW',
     '- copy sourceData.sources into output sources',
     '',
@@ -196,7 +166,7 @@ export function buildGuideUserPrompt(sourceData) {
       sources: 'copy sourceData.sources exactly',
     }, null, 2),
     '',
-    'Source data:',
+    'Validated AI input contract:',
     JSON.stringify(source, null, 2),
     '',
     'Return strict JSON only. The first character must be { and the last character must be }.',
@@ -204,40 +174,53 @@ export function buildGuideUserPrompt(sourceData) {
 }
 
 export function buildCompareUserPrompt(sourceData) {
-  const source = compactCompareSource(sourceData)
+  const source = sourceData.aiInput
+  const isComparison = sourceData.contentType === 'COMPARISON'
+  const limits = isComparison
+    ? { ...PRODUCTION_LIMITS.compare, ...PRODUCTION_LIMITS.comparison }
+    : PRODUCTION_LIMITS.compare
+  const rules = isComparison ? contentRules.comparison : contentRules.compare
   return [
     `Generate a ${sourceData.contentType} production-ready SEO comparison draft as JSON.`,
-    `Prompt version: ${PRODUCTION_PROMPT_VERSION}.`,
+    `Prompt version: ${COMPARE_PRODUCTION_PROMPT_VERSION}.`,
     '',
     'Shared production rules:',
     JSON.stringify(contentRules.shared, null, 2),
     '',
     'Compare production rules:',
-    JSON.stringify(contentRules.compare, null, 2),
+    JSON.stringify(rules, null, 2),
+    '',
+    'Content-type task instructions:',
+    JSON.stringify(TASK_INSTRUCTIONS[sourceData.contentType], null, 2),
     '',
     'Non-negotiable validation targets:',
-    `- ${PRODUCTION_LIMITS.compare.minWords}-${PRODUCTION_LIMITS.compare.maxWords} English editorial words`,
-    `- ${PRODUCTION_LIMITS.compare.minBlocks}-${PRODUCTION_LIMITS.compare.maxBlocks} body blocks`,
-    sourceData.contentType === 'COMPARISON'
-      ? `- at least ${PRODUCTION_LIMITS.compare.minMatrixRows} matrix rows`
+    isComparison
+      ? `- ${limits.minWords}-${limits.maxWords} English editorial words`
+      : `- ideal total length ${limits.idealMinWords}-${limits.idealMaxWords} English editorial words; hard range ${limits.minWords}-${limits.maxWords}`,
+    `- ${limits.minBlocks}-${limits.maxBlocks} body blocks`,
+    isComparison
+      ? `- at least ${limits.minMatrixRows} matrix rows`
       : '- include at least one grounded alternative tool distinct from the primary tool',
-    `- at least ${PRODUCTION_LIMITS.compare.minCriteria} meaningful criteria`,
-    `- at least ${PRODUCTION_LIMITS.compare.minFaqItems} FAQ items`,
-    `- each section >= ${PRODUCTION_LIMITS.compare.minSectionWords} words`,
-    `- each FAQ answer >= ${PRODUCTION_LIMITS.compare.minFaqAnswerWords} words`,
-    `- verdict >= ${PRODUCTION_LIMITS.compare.minVerdictWords} words and scenario-specific`,
+    `- at least ${limits.minCriteria} meaningful criteria`,
+    `- at least ${limits.minFaqItems} FAQ items`,
+    `- each section ${limits.minSectionWords}-${limits.maxSectionWords} words; prefer ${limits.recommendedMinSectionWords}-${limits.maxSectionWords}`,
+    `- each FAQ answer ${limits.minFaqAnswerWords}-${limits.maxFaqAnswerWords} words; do not expand already compliant FAQ answers`,
+    `- verdict >= ${limits.minVerdictWords} words and scenario-specific`,
+    '- Criteria Analysis: 1-2 sentences per dimension. Do not restate matrix rows as long paragraphs.',
+    '- Use explicit headings "Best For {primaryTool.name}" and "Best For {secondaryTool.name}" for the two buyer-fit sections.',
+    '- Never write guarantee, guaranteed, or guarantee rankings. Use help, support, improve, reduce risk, increase likelihood, may help, is designed to, support SEO workflows, or improve the optimization process.',
     '- contentPage.status = REVIEW and robots = NOINDEX_FOLLOW',
-    sourceData.contentType === 'COMPARISON'
+    isComparison
       ? '- comparisonPage.matrixJson must be an array of rows or an object containing a rows array'
       : '- alternativePage.selectionCriteriaJson must be an array or an object containing a criteria array',
     '',
     'Block shape reference:',
-    JSON.stringify(contentRules.compare.blockSchemas, null, 2),
+    JSON.stringify(rules.blockSchemas, null, 2),
     '',
     'Required output shape:',
     JSON.stringify(buildCompareShapeExample(sourceData), null, 2),
     '',
-    'Source data:',
+    'Validated AI input contract:',
     JSON.stringify(source, null, 2),
     '',
     'Return strict JSON only. The first character must be { and the last character must be }.',
@@ -262,7 +245,7 @@ function buildCompareShapeExample(sourceData) {
   }
   if (base.alternativePage) {
     base.alternativePage.primaryToolId = sourceData.primaryTool?.id || 0
-    base.alternativeTools[0].toolId = sourceData.secondaryTool?.id || 0
+    base.alternativeTools[0].toolId = sourceData.aiInput?.alternativeTools?.[0]?.id || 0
   }
   base.sources = 'copy sourceData.sources exactly'
   return base
@@ -270,17 +253,21 @@ function buildCompareShapeExample(sourceData) {
 
 export function applyPromptTemplate(template, sourcePrompt, sourceData) {
   const value = String(template || '').trim()
+  const contractJson = JSON.stringify(sourceData.aiInput, null, 2)
   if (!value || value === '{{SOURCE_PROMPT}}') return sourcePrompt
   if (value.includes('{{SOURCE_PROMPT}}')) {
     return value
       .replaceAll('{{SOURCE_PROMPT}}', sourcePrompt)
-      .replaceAll('{{SOURCE_DATA_JSON}}', JSON.stringify(sourceData, null, 2))
+      .replaceAll('{{SOURCE_DATA_JSON}}', contractJson)
+      .replaceAll('{{INPUT_CONTRACT_JSON}}', contractJson)
   }
   return [
     sourcePrompt,
     '',
     'Prompt-version-specific additional instructions:',
-    value.replaceAll('{{SOURCE_DATA_JSON}}', JSON.stringify(sourceData, null, 2)),
+    value
+      .replaceAll('{{SOURCE_DATA_JSON}}', contractJson)
+      .replaceAll('{{INPUT_CONTRACT_JSON}}', contractJson),
   ].join('\n')
 }
 
@@ -289,15 +276,33 @@ export function buildExpandFixPrompt(originalPrompt, rawOutput, validation) {
     .filter(([, check]) => check && check.passed === false && check.expandable !== false)
     .map(([name, check]) => ({ name, actual: check.actual, expected: check.expected }))
 
+  const overBudget = fixableChecks.some(row => (
+    (row.name === 'wordCount' || row.name === 'blockCount')
+    && Number(row.actual) > Number(String(row.expected).split('-').at(-1))
+  ))
+  const isCompareFix = ['COMPARISON', 'ALTERNATIVE'].includes(String(
+    validation?.inputContractType || validation?.inputContract?.inputContractType || validation?.contentType || '',
+  ).toUpperCase())
+
   return [
     originalPrompt,
     '',
-    'EXPAND/FIX PASS:',
-    'The previous JSON was structurally parseable but failed production depth checks.',
+    'REVISION/FIX PASS:',
+    'The previous JSON was structurally parseable but failed production validation.',
     'Return one complete replacement JSON object. Preserve identifiers, source grounding, output shape, REVIEW status, and NOINDEX_FOLLOW.',
-    'Expand the existing content; do not summarize it, delete valid sections, reduce detail, or switch to a shorter prompt.',
+    overBudget
+      ? 'The draft is over budget. Compress repeated explanations, merge overlapping sections, and remove optional blocks while preserving required topics. Do not add detail.'
+      : 'Add only the detail needed for failed minimum checks. Do not create duplicate sections or repeat explanations.',
+    'Replace forbidden absolute wording with cautious, evidence-based language. Replace guarantee with help, support, improve, reduce risk, or increase likelihood; guaranteed with may help or is designed to; and guarantee rankings with support SEO workflows or improve the optimization process.',
+    isCompareFix
+      ? 'For Compare revisions, target 1,900-2,300 total words and never exceed 2,500. Keep sections at 90-220 words; do not expand sections already within range. Compress Criteria Analysis to 1-2 sentences per dimension and do not repeat matrix content. Keep FAQ answers at 60-100 words and do not expand compliant FAQs.'
+      : '',
+    'Rewrite ranking-style FAQ questions as evaluation questions such as "How should I evaluate...", "Which factors matter when...", or "When should I choose...".',
+    'Remove unsupported feature details. A tool feature may appear only when it is grounded in that tool\'s allowedFeatures or other explicit tool facts.',
     'Fix these checks:',
     JSON.stringify(fixableChecks, null, 2),
+    'Validation errors to correct:',
+    JSON.stringify(validation?.errors || [], null, 2),
     '',
     'Previous JSON:',
     rawOutput,

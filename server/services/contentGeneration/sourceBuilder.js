@@ -1,40 +1,78 @@
-import prisma from '~/server/utils/prisma'
+import prisma from '../../utils/prisma.js'
+import { enforceInputContract } from './inputContracts.js'
+import {
+  buildSourceMap,
+  claimIsUsable,
+  compactToolFacts,
+  flattenSourceMap,
+  internalLinksFor,
+  normalizeCriteria,
+  normalizeStringList,
+  taskBrief,
+} from './sourceSelectors.js'
 
-const SUPPORTED_CONTENT_TYPES = new Set([
-  'BUYER_GUIDE',
-  'CATEGORY_GUIDE',
-  'TUTORIAL',
-  'COMPARISON',
-  'ALTERNATIVE',
-])
-
+const SUPPORTED_CONTENT_TYPES = new Set(['BUYER_GUIDE', 'CATEGORY_GUIDE', 'TUTORIAL', 'COMPARISON', 'ALTERNATIVE'])
 const GUIDE_MIN_SELECTED_TOOLS = 5
 const GUIDE_MAX_SELECTED_TOOLS = 8
-const GUIDE_CANDIDATE_LIMIT = 500
+const GUIDE_CANDIDATE_LIMIT = 150
 const GUIDE_FALLBACK_LIMIT = 8
 const GENERIC_CATEGORY_HANDLES = new Set([
   'ai-chatbot',
   'ai-assistant',
-  'ai-productivity-tools',
-  'ai-workflow',
-  'ai-knowledge-base',
-  'ai-project-management',
+  'ai-productivity',
+  'productivity',
+  'workspace',
+  'ai-workspace',
+  'ai-tools',
 ])
 const SPECIFIC_GUIDE_HANDLES = new Set([
-  'ai-summarizer',
   'ai-writing-assistants',
-  'ai-grammar-checker',
+  'ai-summarizer',
   'ai-paraphraser',
-  'ai-rewriter',
-  'ai-text-generator',
-  'ai-blog-generator',
+  'ai-grammar-checker',
   'ai-email-generator',
+  'ai-image-generator',
+  'ai-video-generator',
+  'ai-code-assistant',
+  'ai-seo',
+  'ai-marketing',
+  'ai-presentation',
+  'ai-transcription',
+  'ai-pdf',
+  'ai-meeting-assistant',
+  'ai-note-taker',
+  'ai-research',
+  'ai-design',
+  'ai-social-media',
 ])
-
-function toNumber(value) {
-  if (value == null) return null
-  if (typeof value === 'object' && 'toString' in value) return Number(value.toString())
-  return Number(value)
+const GUIDE_BLOCKED_REPRESENTATIVE_PATTERNS = [
+  /\bchatgpt\b/i,
+  /\bnotion\b/i,
+  /\bdeepl\b/i,
+  /\bbitbucket\b/i,
+  /\bzerogpt\b/i,
+]
+const GUIDE_CORE_TOOL_HANDLES = {
+  'ai-writing-assistants': new Set([
+    'grammarly',
+    'quillbot-paraphraser',
+    'wordtune',
+    'hix-ai',
+    'hemingway-editor',
+    'smodin',
+    'paraphraser-io',
+    'easy-peasy-ai',
+  ]),
+  'ai-summarizer': new Set([
+    'notegpt',
+    'screenapp',
+    'lilys-ai',
+    'ai-pdf-summarizer-by-pdf-guru',
+    'kome-ai',
+    'slidespeak',
+    'summarizer-org',
+    'ai-summarizer-best',
+  ]),
 }
 
 export function slugify(value) {
@@ -47,142 +85,91 @@ export function slugify(value) {
     .replace(/^-|-$/g, '')
 }
 
+function toNumber(value) {
+  if (value == null) return null
+  if (typeof value === 'object' && 'toString' in value) return Number(value.toString())
+  return Number(value)
+}
+
 function mapCategory(row, parent = null) {
   if (!row) return null
+  return { id: row.id, name: row.name, handle: row.handle, parent }
+}
+
+function categoryContext(category) {
+  if (!category) return null
   return {
-    id: row.id,
-    name: row.name,
-    handle: row.handle,
-    parent,
+    id: category.raw.id,
+    name: category.raw.name,
+    handle: category.raw.handle,
+    parentCategory: category.level1,
+    whatIsSummary: category.raw.whatIsSummary || '',
+    feature: category.raw.feature || [],
+    whoIsUse: category.raw.whoIsUse || '',
+    howDoWork: category.raw.howDoWork || '',
+    advantages: category.raw.advantages || '',
+    faq: category.raw.faq || [],
   }
 }
 
-function mapSource(source, context = '', sort = 0) {
-  if (!source?.url) return null
-  return {
-    id: source.id,
-    url: source.url,
-    domain: source.domain || safeDomain(source.url),
-    title: source.title || '',
-    sourceType: source.sourceType || 'OTHER',
-    retrievedAt: source.retrievedAt || null,
-    context,
-    sort,
-  }
-}
-
-function mapTool(tool) {
-  const pricingPlans = (tool.pricingPlans || []).map((plan) => ({
-    id: plan.id,
-    planName: plan.planName,
-    price: toNumber(plan.price),
-    currency: plan.currency,
-    billingInterval: plan.billingInterval,
-    isFree: plan.isFree,
-    hasTrial: plan.hasTrial,
-    seatLimit: plan.seatLimit,
-    usageLimit: plan.usageLimit,
-    features: plan.features || [],
-    rawText: plan.rawText,
-    verifiedAt: plan.verifiedAt || null,
-  }))
-  const claims = (tool.claims || []).map((claim) => ({
-    id: claim.id,
-    claimType: claim.claimType,
-    claimText: claim.claimText,
-    valueJson: claim.valueJson,
-    confidence: toNumber(claim.confidence),
-    verifiedAt: claim.verifiedAt || null,
-    expiresAt: claim.expiresAt || null,
-    status: claim.status,
-  }))
-  const normalizedPlatforms = (tool.platforms || []).map((item) => item.platform).filter(Boolean)
-
+function mapToolForValidation(tool, options = {}) {
+  const relevanceTerms = options.relevanceTerms || []
+  const claims = options.includeClaims === false
+    ? []
+    : (tool.claims || []).filter(claim => claimIsUsable(claim, relevanceTerms)).slice(0, options.maxClaims || 6)
+  const pricingPlans = options.includePricing === false ? [] : (tool.pricingPlans || []).slice(0, options.maxPlans || 4)
+  const compactFacts = compactToolFacts(tool, options)
   return {
     id: tool.id,
     handle: tool.handle,
     name: tool.name,
     description: tool.description,
     website: tool.website,
-    pricing: tool.pricing || [],
-    pricingPlans,
-    claims,
-    platforms: normalizedPlatforms.length ? normalizedPlatforms : (tool.websiteType || []),
-    socialLinks: (tool.socialLinks || []).map((link) => ({
-      linkType: link.linkType,
-      label: link.label,
-      url: link.url,
-      email: link.email,
-      isPrimary: link.isPrimary,
-      verifiedAt: link.verifiedAt || null,
+    pricing: options.includePricing === false ? [] : (tool.pricing || []).slice(0, 5),
+    pricingPlans: pricingPlans.map(plan => ({
+      id: plan.id,
+      planName: plan.planName,
+      price: toNumber(plan.price),
+      currency: plan.currency,
+      billingInterval: plan.billingInterval,
+      isFree: plan.isFree,
+      hasTrial: plan.hasTrial,
+      seatLimit: plan.seatLimit,
+      usageLimit: plan.usageLimit,
+      features: plan.features || [],
+      rawText: plan.rawText,
+      verifiedAt: plan.verifiedAt || null,
     })),
+    claims: claims.map(claim => ({
+      id: claim.id,
+      claimType: claim.claimType,
+      claimText: claim.claimText,
+      confidence: toNumber(claim.confidence),
+      verifiedAt: claim.verifiedAt || null,
+      expiresAt: claim.expiresAt || null,
+      status: claim.status,
+    })),
+    platforms: (tool.platforms || []).map(item => item.platform).filter(Boolean),
     pros: tool.pros || [],
     cons: tool.cons || [],
     features: tool.feature || [],
+    allowedFeatures: compactFacts.allowedFeatures,
     rating: toNumber(tool.toolInfoReview),
     monthlyVisits: toNumber(tool.monthVisitedCount) || 0,
     whatIsSummary: tool.whatIsSummary,
     tags: tool.tags || [],
     useCases: tool.useCases || [],
     forJobs: tool.forJobs || [],
-    companyInfo: tool.companyInfo,
     isFree: tool.isFree,
-    matchedCategories: (tool.toolCategories || []).map((link) => ({
-      id: link.categoryId,
-      name: link.category?.name || '',
-      handle: link.category?.handle || '',
-      level1Handle: link.category?.level1?.handle || '',
-    })).filter((row) => row.id),
-    categoryRelevanceScore: tool.categoryRelevanceScore ?? null,
+    matchedCategories: matchedCategoriesForTool(tool),
+    categoryRelevanceScore: Number.isFinite(tool.categoryRelevanceScore) ? tool.categoryRelevanceScore : null,
     relevanceLabel: tool.relevanceLabel || null,
-    selectionReason: tool.selectionReason || '',
-    sourceCompletenessScore: tool.sourceCompletenessScore ?? null,
-    contentCompletenessScore: tool.contentCompletenessScore ?? null,
-    categoryFocusScore: tool.categoryFocusScore ?? null,
+    selectionReason: tool.selectionReason || null,
+    sourceCompletenessScore: Number.isFinite(tool.sourceCompletenessScore) ? tool.sourceCompletenessScore : null,
+    contentCompletenessScore: Number.isFinite(tool.contentCompletenessScore) ? tool.contentCompletenessScore : null,
+    categoryFocusScore: Number.isFinite(tool.categoryFocusScore) ? tool.categoryFocusScore : null,
+    representativeScore: Number.isFinite(tool.representativeScore) ? tool.representativeScore : null,
     isFallback: Boolean(tool.isFallback),
-  }
-}
-
-function collectSources(tools) {
-  const sources = []
-  const seen = new Set()
-  function push(source) {
-    if (!source?.url || seen.has(source.url)) return
-    seen.add(source.url)
-    sources.push({ ...source, sort: sources.length + 1 })
-  }
-
-  for (const tool of tools) {
-    push({
-      url: tool.website,
-      domain: safeDomain(tool.website),
-      title: tool.name,
-      sourceType: 'OFFICIAL_SITE',
-      retrievedAt: null,
-      context: `Official website for ${tool.name}`,
-    })
-    for (const plan of tool.pricingPlans || []) {
-      push(mapSource(plan.source, `Pricing source for ${tool.name}`, sources.length + 1))
-    }
-    for (const claim of tool.claims || []) {
-      push(mapSource(claim.source, `Claim source for ${tool.name}: ${claim.claimType}`, sources.length + 1))
-    }
-    for (const platform of tool.platforms || []) {
-      push(mapSource(platform.source, `Platform source for ${tool.name}`, sources.length + 1))
-    }
-    for (const link of tool.socialLinks || []) {
-      push(mapSource(link.source, `Social/contact source for ${tool.name}`, sources.length + 1))
-    }
-  }
-  return sources
-}
-
-function safeDomain(url) {
-  try {
-    return new URL(url).hostname
-  }
-  catch {
-    return ''
   }
 }
 
@@ -204,33 +191,23 @@ async function fetchCategory(categoryId) {
     },
   })
   if (!row) return null
-  return {
-    raw: row,
-    level1: mapCategory(row.level1),
-    level2: mapCategory(row, mapCategory(row.level1)),
-  }
+  return { raw: row, level1: mapCategory(row.level1), level2: mapCategory(row, mapCategory(row.level1)) }
 }
 
 async function fetchRelatedCategories(categoryId) {
-  const current = categoryId
-    ? await prisma.categoryLevel2.findUnique({ where: { id: Number(categoryId) }, select: { level1Id: true } })
-    : null
+  if (!categoryId) return []
+  const current = await prisma.categoryLevel2.findUnique({ where: { id: Number(categoryId) }, select: { level1Id: true } })
   const rows = await prisma.categoryLevel2.findMany({
     where: {
       isActive: true,
       ...(current?.level1Id ? { level1Id: current.level1Id } : {}),
-      ...(categoryId ? { NOT: { id: Number(categoryId) } } : {}),
+      NOT: { id: Number(categoryId) },
     },
     orderBy: [{ toolCount: 'desc' }, { sort: 'desc' }, { id: 'asc' }],
     take: 8,
-    select: {
-      id: true,
-      name: true,
-      handle: true,
-      level1: { select: { id: true, name: true, handle: true } },
-    },
+    select: { id: true, name: true, handle: true, level1: { select: { id: true, name: true, handle: true } } },
   })
-  return rows.map((row) => mapCategory(row, mapCategory(row.level1)))
+  return rows.map(row => mapCategory(row, mapCategory(row.level1)))
 }
 
 function toolInclude() {
@@ -241,15 +218,17 @@ function toolInclude() {
       include: { source: true },
     },
     claims: {
-      where: { status: 'ACTIVE' },
+      where: {
+        status: 'ACTIVE',
+        sourceId: { not: null },
+        confidence: { gte: 0.7 },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      },
       orderBy: [{ confidence: 'desc' }, { id: 'asc' }],
       take: 12,
       include: { source: true },
     },
-    platforms: {
-      orderBy: [{ platform: 'asc' }],
-      include: { source: true },
-    },
+    platforms: { orderBy: [{ platform: 'asc' }], include: { source: true } },
     socialLinks: {
       orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }],
       include: { source: true },
@@ -271,166 +250,160 @@ function toolInclude() {
   }
 }
 
-async function fetchTools({ categoryId = null, toolId = null, limit = 5, excludeIds = [] } = {}) {
-  const safeLimit = Math.min(30, Math.max(1, Number(limit) || 5))
-  const where = {
-    toolStatus: { in: ['ONLINE', 'ACTIVE'] },
-    handle: { not: '' },
-    name: { not: '' },
-    ...(toolId ? { id: Number(toolId) } : {}),
-    ...(excludeIds.length ? { id: { notIn: excludeIds.map(Number) } } : {}),
-    ...(categoryId ? { toolCategories: { some: { categoryId: Number(categoryId) } } } : {}),
-  }
+async function fetchRankedTools({ categoryId = null, limit = 5, excludeIds = [] } = {}) {
   return prisma.aiTool.findMany({
-    where,
+    where: {
+      toolStatus: { in: ['ONLINE', 'ACTIVE'] },
+      handle: { not: '' },
+      name: { not: '' },
+      ...(excludeIds.length ? { id: { notIn: excludeIds.map(Number) } } : {}),
+      ...(categoryId ? { toolCategories: { some: { categoryId: Number(categoryId) } } } : {}),
+    },
     orderBy: [{ rank: 'asc' }, { monthVisitedCount: 'desc' }, { updatedAt: 'desc' }],
     include: toolInclude(),
-    take: safeLimit,
+    take: Math.min(30, Math.max(1, Number(limit) || 5)),
   })
 }
 
-async function fetchGuideCandidateTools({ categoryId, limit = GUIDE_CANDIDATE_LIMIT, excludeIds = [] } = {}) {
-  return prisma.aiTool.findMany({
+async function fetchGuideCandidateTools(categoryId) {
+  if (!categoryId) throw new Error('BUYER_GUIDE requires categoryId; Guide generation cannot fall back to global tools')
+  const rows = await prisma.aiTool.findMany({
     where: {
       toolStatus: { in: ['ONLINE', 'ACTIVE'] },
       handle: { not: '' },
       name: { not: '' },
-      ...(excludeIds.length ? { id: { notIn: excludeIds.map(Number) } } : {}),
       toolCategories: { some: { categoryId: Number(categoryId) } },
     },
-    orderBy: [{ monthVisitedCount: 'desc' }, { rank: 'asc' }, { updatedAt: 'desc' }],
-    include: toolInclude(),
-    take: Math.min(1000, Math.max(50, Number(limit) || GUIDE_CANDIDATE_LIMIT)),
+    orderBy: [{ rank: 'asc' }, { monthVisitedCount: 'desc' }, { collectedCount: 'desc' }, { updatedAt: 'desc' }, { id: 'asc' }],
+    select: { id: true },
+    take: GUIDE_CANDIDATE_LIMIT,
   })
+  return fetchToolsByIds(rows.map(row => row.id), GUIDE_CANDIDATE_LIMIT)
 }
 
-async function fetchGuideFallbackTools({ category, excludeIds = [] } = {}) {
-  if (!category?.raw?.level1?.id) return []
+async function fetchGuideFallbackTools(category, excludeIds = []) {
+  const level1Id = category?.raw?.level1?.id || category?.level1?.id || null
+  const currentCategoryId = category?.level2?.id || category?.raw?.id || null
+  if (!level1Id || !currentCategoryId) return []
+  const siblingCategories = await prisma.categoryLevel2.findMany({
+    where: {
+      isActive: true,
+      level1Id: Number(level1Id),
+      NOT: { id: Number(currentCategoryId) },
+    },
+    orderBy: [{ toolCount: 'desc' }, { sort: 'desc' }, { id: 'asc' }],
+    take: GUIDE_FALLBACK_LIMIT,
+    select: { id: true },
+  })
+  const siblingIds = siblingCategories.map(row => row.id)
+  if (!siblingIds.length) return []
   return prisma.aiTool.findMany({
     where: {
       toolStatus: { in: ['ONLINE', 'ACTIVE'] },
       handle: { not: '' },
       name: { not: '' },
       ...(excludeIds.length ? { id: { notIn: excludeIds.map(Number) } } : {}),
-      toolCategories: {
-        some: {
-          category: {
-            level1Id: category.raw.level1.id,
-            NOT: { id: category.raw.id },
-          },
-        },
-      },
+      toolCategories: { some: { categoryId: { in: siblingIds } } },
     },
-    orderBy: [{ monthVisitedCount: 'desc' }, { rank: 'asc' }, { updatedAt: 'desc' }],
+    orderBy: [{ rank: 'asc' }, { monthVisitedCount: 'desc' }, { updatedAt: 'desc' }, { id: 'asc' }],
     include: toolInclude(),
-    take: GUIDE_CANDIDATE_LIMIT,
+    take: GUIDE_FALLBACK_LIMIT,
   })
 }
 
 function tokenizeCategory(category) {
-  const raw = [
-    category?.name,
-    String(category?.handle || '').replace(/-/g, ' '),
+  const text = [
+    category?.level2?.handle,
+    category?.level2?.name,
+    category?.raw?.handle,
+    category?.raw?.name,
   ].filter(Boolean).join(' ')
-  return [...new Set(String(raw)
+  return [...new Set(String(text)
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .split(/\s+/)
-    .filter((token) => token.length >= 3 && !['the', 'and', 'for', 'with', 'tools', 'tool', 'online'].includes(token)))]
+    .replace(/^ai[-\s]+/, '')
+    .split(/[^a-z0-9]+/)
+    .filter(token => token.length >= 3 && !['tools', 'tool', 'generator', 'assistant', 'assistants'].includes(token)))]
+}
+
+function matchedCategoriesForTool(tool) {
+  return (tool?.toolCategories || [])
+    .map(row => row.category)
+    .filter(Boolean)
+    .map(category => ({
+      id: category.id,
+      name: category.name,
+      handle: category.handle,
+      level1Id: category.level1?.id || null,
+      level1Name: category.level1?.name || null,
+      level1Handle: category.level1?.handle || null,
+    }))
 }
 
 function toolText(tool) {
   return [
-    tool.name,
-    tool.handle,
-    tool.seoMetaTitle,
-    tool.seoMetaDescription,
-    ...(tool.seoMetaKeywords || []),
-    tool.whatIsSummary,
-    tool.description,
-    ...(tool.tags || []),
-    ...(tool.feature || []),
-    ...(tool.useCases || []),
-    tool.expandedAbout,
-    JSON.stringify(tool.featuresDetails || ''),
-    JSON.stringify(tool.expandedUsecases || ''),
-    JSON.stringify(tool.expandedFaqs || ''),
+    tool?.name,
+    tool?.handle,
+    tool?.description,
+    tool?.whatIsSummary,
+    ...(tool?.tags || []),
+    ...(tool?.feature || []),
+    ...(tool?.useCases || []),
+    ...(tool?.forJobs || []),
   ].filter(Boolean).join(' ').toLowerCase()
 }
 
 function categoryKeywordHits(tool, category) {
-  const text = toolText(tool)
   const tokens = tokenizeCategory(category)
-  const phrases = [
-    String(category?.handle || '').toLowerCase(),
-    String(category?.handle || '').toLowerCase().replace(/-/g, ' '),
-    String(category?.name || '').toLowerCase(),
-  ].filter((value) => value.length >= 4)
-
-  const phraseHit = phrases.some((phrase) => text.includes(phrase))
-  const tokenHits = tokens.filter((token) => {
-    if (text.includes(token)) return true
-    if (token.endsWith('s') && text.includes(token.slice(0, -1))) return true
-    return false
-  })
-  return {
-    phraseHit,
-    tokenHits,
-    hasHit: phraseHit || tokenHits.length > 0,
-  }
+  if (!tokens.length) return 0
+  const haystack = toolText(tool)
+  return tokens.filter(token => haystack.includes(token)).length
 }
 
 function hasSourceCompleteness(tool) {
-  return Boolean(tool.website)
-    || (tool.pricingPlans || []).some((plan) => plan.source)
-    || (tool.claims || []).some((claim) => claim.source)
-    || (tool.platforms || []).some((platform) => platform.source)
-    || (tool.socialLinks || []).some((link) => link.source)
+  return Boolean(
+    tool?.website
+    || tool?.sourceMap?.length
+    || tool?.claims?.some(claim => claim.sourceId || claim.source)
+    || tool?.pricingPlans?.some(plan => plan.sourceId || plan.source)
+    || tool?.platforms?.some(platform => platform.sourceId || platform.source)
+    || tool?.socialLinks?.some(link => link.sourceId || link.source),
+  )
 }
 
 function hasContentCompleteness(tool) {
-  return Boolean(tool.expandedAbout)
-    || Boolean(tool.featuresDetails)
-    || Boolean(tool.expandedUsecases)
-    || Boolean(tool.expandedFaqs)
-    || Boolean(tool.whatIsSummary)
-    || Boolean((tool.feature || []).length)
-    || Boolean((tool.useCases || []).length)
+  return Boolean(
+    tool?.whatIsSummary
+    || tool?.description
+    || tool?.feature?.length
+    || tool?.useCases?.length
+    || tool?.faq?.length
+    || tool?.pros?.length
+    || tool?.cons?.length,
+  )
 }
 
 function hasPricingContext(tool) {
-  return Boolean((tool.pricing || []).length || (tool.pricingPlans || []).length || tool.isFree)
+  return Boolean(tool?.pricingPlans?.length || tool?.pricing?.length || tool?.pricingModel)
 }
 
-function isGenericTool(tool, currentCategory) {
-  const handles = (tool.toolCategories || []).map((link) => link.category?.handle).filter(Boolean)
-  const text = toolText(tool)
-  if (!SPECIFIC_GUIDE_HANDLES.has(currentCategory?.handle)) return false
-  if (currentCategory?.handle === 'ai-writing-assistants' && handles.some((handle) => ['ai-grammar-checker', 'ai-paraphraser', 'ai-rewriter', 'ai-text-generator', 'ai-writing'].includes(handle))) return false
-  if (currentCategory?.handle === 'ai-summarizer' && handles.some((handle) => ['ai-pdf-summarizer', 'ai-video-summarizer', 'ai-youtube-summary', 'ai-article-summarizer', 'ai-book-summarizer'].includes(handle))) return false
-  return handles.some((handle) => GENERIC_CATEGORY_HANDLES.has(handle))
-    || /\b(chatbot|assistant|workspace|productivity|project management|calendar|wiki)\b/i.test(text)
+function isGenericTool(tool) {
+  const handles = matchedCategoriesForTool(tool).map(category => category.handle)
+  const text = `${tool?.handle || ''} ${tool?.name || ''} ${tool?.description || ''}`.toLowerCase()
+  return handles.some(handle => GENERIC_CATEGORY_HANDLES.has(handle))
+    || /\b(chatbot|general assistant|productivity|workspace|all-in-one)\b/i.test(text)
 }
 
-function relevanceCap(tool, currentCategory, hits) {
-  const text = toolText(tool)
-  const handle = currentCategory?.handle
-  const categoryHandles = (tool.toolCategories || []).map((link) => link.category?.handle).filter(Boolean)
-  const hasAnyCategory = (...handles) => handles.some((value) => categoryHandles.includes(value))
-  if (!hits.hasHit) {
-    if (handle === 'ai-summarizer' && /\b(bitbucket|git|repository|devops|ci\/cd|code review|pull request)\b/i.test(text)) return 25
-    if (/\b(workspace|project management|calendar|wiki|database)\b/i.test(text)) return 45
-    return 49
-  }
-  if (handle === 'ai-summarizer' && /\b(ai detector|content detector|plagiarism checker|chatgpt detector|zerogpt)\b/i.test(text)) return 49
-  if (handle === 'ai-summarizer' && hasAnyCategory('ai-search-engine')) return 69
-  if (handle === 'ai-summarizer' && hasAnyCategory('ai-flashcard-maker', 'ai-quiz-generator', 'ai-mind-mapping', 'ai-notes-generator') && !hasAnyCategory('ai-pdf-summarizer', 'ai-video-summarizer', 'ai-youtube-summary', 'ai-article-summarizer', 'ai-book-summarizer')) return 79
-  if (handle === 'ai-writing-assistants' && /\b(humanize ai|ai humanizer|anti detector|bypass detector)\b/i.test(text) && !hasAnyCategory('ai-grammar-checker', 'ai-paraphraser', 'ai-rewriter', 'ai-text-generator', 'ai-writing')) return 49
-  if (handle === 'ai-writing-assistants' && /\b(ai detector|chatgpt detector|copyleaks)\b/i.test(text) && !hasAnyCategory('ai-grammar-checker', 'ai-paraphraser', 'ai-rewriter', 'ai-text-generator', 'ai-writing')) return 49
-  if (handle === 'ai-writing-assistants' && /\b(machine translation|document translation|localization|translate)\b/i.test(text)) return 69
-  if (handle === 'ai-writing-assistants' && hasAnyCategory('ai-homework-helper', 'ai-answer', 'ai-math', 'ai-course')) return 69
-  if (handle === 'ai-writing-assistants' && hasAnyCategory('ai-note-taker', 'ai-email-writer', 'ai-email-assistant', 'ai-cover-letter-generator', 'ai-resume-builder', 'ai-resume-checker', 'ai-research-tool') && !hasAnyCategory('ai-grammar-checker', 'ai-paraphraser', 'ai-rewriter', 'ai-text-generator', 'ai-writing')) return 69
-  return 100
+function relevanceCap(tool, category) {
+  const handle = category?.level2?.handle || category?.raw?.handle
+  const hits = categoryKeywordHits(tool, category)
+  const categoryCount = tool.toolCategories?.length || 0
+  const identity = `${tool?.handle || ''} ${tool?.name || ''}`.toLowerCase()
+  if (GUIDE_BLOCKED_REPRESENTATIVE_PATTERNS.some(pattern => pattern.test(identity))) return 49
+  const isKnownCore = knownCoreToolBonus(tool, category) > 0
+  if (SPECIFIC_GUIDE_HANDLES.has(handle) && hits === 0 && !isKnownCore) return 69
+  if (SPECIFIC_GUIDE_HANDLES.has(handle) && isGenericTool(tool) && hits === 0 && !isKnownCore) return 49
+  if (categoryCount > 12 && hits === 0 && !isKnownCore) return 49
+  return null
 }
 
 function labelForScore(score) {
@@ -440,213 +413,193 @@ function labelForScore(score) {
   return 'INVALID'
 }
 
-function scoreGuideTool(tool, category, { fallback = false } = {}) {
-  const currentCategory = category?.raw || category?.level2
-  const links = tool.toolCategories || []
-  const currentLink = links.find((link) => Number(link.categoryId) === Number(currentCategory?.id))
-  const categoryCount = links.length
-  const hits = categoryKeywordHits(tool, currentCategory)
-  const sourceComplete = hasSourceCompleteness(tool)
-  const contentComplete = hasContentCompleteness(tool)
-  const pricingComplete = hasPricingContext(tool)
-  const genericPenalty = isGenericTool(tool, currentCategory)
-  const categoryHandles = links.map((link) => link.category?.handle).filter(Boolean)
+function rankRepresentativeScore(rank) {
+  const value = toNumber(rank)
+  if (!Number.isFinite(value) || value <= 0) return 0
+  if (value <= 50) return 25
+  if (value <= 100) return 22
+  if (value <= 500) return 18
+  if (value <= 1000) return 15
+  if (value <= 5000) return 10
+  if (value <= 15000) return 5
+  return 0
+}
 
+function knownCoreToolBonus(tool, category) {
+  const categoryHandle = category?.level2?.handle || category?.raw?.handle
+  const coreHandles = GUIDE_CORE_TOOL_HANDLES[categoryHandle]
+  if (!coreHandles?.size) return 0
+  return coreHandles.has(String(tool?.handle || '').toLowerCase()) ? 30 : 0
+}
+
+function representativeScoreForTool(tool, category, sourceCompletenessScore, contentCompletenessScore) {
+  const visits = Math.max(0, toNumber(tool?.monthVisitedCount) || 0)
+  const collected = Math.max(0, toNumber(tool?.collectedCount) || 0)
+  const trafficScore = Math.min(35, Math.log10(visits + 1) * 5)
+  const collectedScore = Math.min(15, Math.log10(collected + 1) * 8)
+  const rankScore = rankRepresentativeScore(tool?.rank)
+  const sourceScore = sourceCompletenessScore ? 5 : 0
+  const contentScore = contentCompletenessScore ? 5 : 0
+  const coreBonus = knownCoreToolBonus(tool, category)
+  const genericPenalty = isGenericTool(tool) ? -15 : 0
+  const blockedPenalty = GUIDE_BLOCKED_REPRESENTATIVE_PATTERNS.some(pattern => pattern.test(`${tool?.handle || ''} ${tool?.name || ''}`))
+    ? -100
+    : 0
+  return Math.max(0, Math.round(trafficScore + collectedScore + rankScore + sourceScore + contentScore + coreBonus + genericPenalty + blockedPenalty))
+}
+
+function scoreGuideTool(tool, category, options = {}) {
+  const currentCategoryId = Number(category?.level2?.id || category?.raw?.id)
+  const categories = matchedCategoriesForTool(tool)
+  const categoryCount = categories.length
+  const exactMatch = categories.some(row => Number(row.id) === currentCategoryId)
+  const keywordHits = categoryKeywordHits(tool, category)
+  const sourceCompletenessScore = hasSourceCompleteness(tool) ? 10 : 0
+  const contentCompletenessScore = hasContentCompleteness(tool) ? 10 : 0
+  const pricingScore = hasPricingContext(tool) ? 5 : 0
+  const focusScore = categoryCount > 0 && categoryCount <= 5 ? 15 : 0
+  const broadPenalty = categoryCount > 8 ? -15 : 0
+  const genericPenalty = SPECIFIC_GUIDE_HANDLES.has(category?.level2?.handle || category?.raw?.handle) && isGenericTool(tool) ? -10 : 0
+  const coreFitBonus = knownCoreToolBonus(tool, category) > 0 ? 10 : 0
   let score = 0
-  const reasons = []
-  if (currentLink) {
-    score += 50
-    reasons.push('bound to current L2')
-  }
-  if (hits.hasHit) {
-    const keywordScore = hits.phraseHit || (currentCategory?.handle === 'ai-summarizer' && hits.tokenHits.includes('summarizer'))
-      ? 20
-      : Math.min(15, hits.tokenHits.length * 8)
-    score += keywordScore
-    reasons.push(`matches category keywords: ${(hits.phraseHit ? ['phrase'] : hits.tokenHits).slice(0, 3).join(', ')}`)
-  }
-  if (currentCategory?.handle === 'ai-writing-assistants' && categoryHandles.some((handle) => ['ai-grammar-checker', 'ai-paraphraser', 'ai-rewriter', 'ai-text-generator', 'ai-writing'].includes(handle))) {
-    score += 15
-    reasons.push('matches writing-core adjacent category')
-  }
-  if (currentCategory?.handle === 'ai-summarizer' && categoryHandles.some((handle) => ['ai-pdf-summarizer', 'ai-video-summarizer', 'ai-youtube-summary', 'ai-article-summarizer', 'ai-book-summarizer'].includes(handle))) {
-    score += 15
-    reasons.push('matches summarizer-core adjacent category')
-  }
-  if (categoryCount > 0 && categoryCount <= 5) {
-    score += 15
-    reasons.push('focused category footprint')
-  }
-  if (categoryCount > 8) {
-    score -= 15
-    reasons.push('broad multi-category binding')
-  }
-  if (genericPenalty) {
-    score -= 10
-    reasons.push('generic assistant/productivity positioning')
-  }
-  if (sourceComplete) {
-    score += 10
-    reasons.push('has official/source context')
-  }
-  if (contentComplete) {
-    score += 10
-    reasons.push('has usable content fields')
-  }
-  if (pricingComplete) {
-    score += 5
-    reasons.push('has pricing context')
-  }
-
-  const categoryFocusScore = calculateCategoryFocusScore({
-    currentCategory,
-    categoryHandles,
-    categoryCount,
-    hits,
-    genericPenalty,
-  })
-  score = Math.min(score, relevanceCap(tool, currentCategory, hits))
-  if (fallback) score = Math.min(score, 69)
-  score = Math.max(0, Math.min(100, Math.round(score)))
-
+  if (exactMatch) score += 50
+  if (keywordHits > 0) score += Math.min(20, keywordHits * 10)
+  score += focusScore + broadPenalty + genericPenalty + coreFitBonus + sourceCompletenessScore + contentCompletenessScore + pricingScore
+  if (options.fallback) score = Math.min(score, 69)
+  const cap = relevanceCap(tool, category)
+  if (Number.isFinite(cap)) score = Math.min(score, cap)
+  const categoryRelevanceScore = Math.max(0, Math.min(100, score))
+  const relevanceLabel = labelForScore(categoryRelevanceScore)
+  const representativeScore = representativeScoreForTool(tool, category, sourceCompletenessScore, contentCompletenessScore)
   return {
     ...tool,
-    categoryRelevanceScore: score,
-    relevanceLabel: labelForScore(score),
-    selectionReason: reasons.join('; ') || 'low category evidence',
-    sourceCompletenessScore: sourceComplete ? 1 : 0,
-    contentCompletenessScore: contentComplete ? 1 : 0,
-    categoryFocusScore,
-    isFallback: fallback,
+    categoryRelevanceScore,
+    relevanceLabel,
+    representativeScore,
+    matchedCategories: categories,
+    sourceCompletenessScore,
+    contentCompletenessScore,
+    categoryFocusScore: focusScore,
+    selectionReason: [
+      exactMatch ? `Bound to current L2 category ${category?.level2?.handle || category?.raw?.handle}` : 'Not bound to current L2 category',
+      keywordHits ? `${keywordHits} category keyword hit(s)` : 'No direct category keyword hit',
+      categoryCount <= 5 ? 'focused category footprint' : `${categoryCount} category bindings`,
+      `representative score ${representativeScore}`,
+      hasSourceCompleteness(tool) ? 'has source context' : 'limited source context',
+      hasContentCompleteness(tool) ? 'has rewritten content fields' : 'limited rewritten content fields',
+    ].join('; '),
   }
 }
 
-function calculateCategoryFocusScore({ currentCategory, categoryHandles, categoryCount, hits, genericPenalty }) {
-  let score = 0
-  if (hits.phraseHit) score += 20
-  score += Math.min(12, (hits.tokenHits || []).length * 4)
-  if (currentCategory?.handle === 'ai-writing-assistants' && categoryHandles.some((handle) => ['ai-grammar-checker', 'ai-paraphraser', 'ai-rewriter', 'ai-text-generator', 'ai-writing'].includes(handle))) score += 18
-  if (currentCategory?.handle === 'ai-summarizer' && categoryHandles.some((handle) => ['ai-pdf-summarizer', 'ai-video-summarizer', 'ai-youtube-summary', 'ai-article-summarizer', 'ai-book-summarizer'].includes(handle))) score += 18
-  if (categoryCount > 0 && categoryCount <= 5) score += 8
-  if (categoryCount > 8) score -= 8
-  if (genericPenalty) score -= 6
-  return Math.max(0, Math.min(60, score))
+function guideSortValue(tool) {
+  return [
+    tool.relevanceLabel === 'STRONG' ? 0 : 1,
+    -(tool.representativeScore || 0),
+    -(tool.categoryRelevanceScore || 0),
+    -(tool.sourceCompletenessScore || 0),
+    -(tool.contentCompletenessScore || 0),
+    -(toNumber(tool.monthVisitedCount) || 0),
+    toNumber(tool.rank) || Number.MAX_SAFE_INTEGER,
+    tool.id || Number.MAX_SAFE_INTEGER,
+  ]
 }
 
-function guideSortValue(label) {
-  return label === 'STRONG' ? 2 : label === 'MEDIUM' ? 1 : 0
-}
-
-function sortGuideTools(a, b) {
-  const labelDiff = guideSortValue(b.relevanceLabel) - guideSortValue(a.relevanceLabel)
-  if (labelDiff) return labelDiff
-  if (b.categoryRelevanceScore !== a.categoryRelevanceScore) return b.categoryRelevanceScore - a.categoryRelevanceScore
-  if ((b.sourceCompletenessScore || 0) !== (a.sourceCompletenessScore || 0)) return (b.sourceCompletenessScore || 0) - (a.sourceCompletenessScore || 0)
-  if ((b.contentCompletenessScore || 0) !== (a.contentCompletenessScore || 0)) return (b.contentCompletenessScore || 0) - (a.contentCompletenessScore || 0)
-  const visitDiff = (toNumber(b.monthVisitedCount) || 0) - (toNumber(a.monthVisitedCount) || 0)
-  if (visitDiff) return visitDiff
-  if ((a.rank || 0) !== (b.rank || 0)) return (a.rank || 0) - (b.rank || 0)
-  return (a.id || 0) - (b.id || 0)
+function sortGuideTools(rows) {
+  return rows.sort((a, b) => {
+    const left = guideSortValue(a)
+    const right = guideSortValue(b)
+    for (let index = 0; index < left.length; index += 1) {
+      if (left[index] < right[index]) return -1
+      if (left[index] > right[index]) return 1
+    }
+    return 0
+  })
 }
 
 function dedupeTools(tools) {
-  return Array.from(new Map((tools || []).filter(Boolean).map((tool) => [tool.id, tool])).values())
+  return Array.from(new Map((tools || []).map(tool => [tool.id, tool])).values())
 }
 
-function selectGuideTools(candidates, category, targetLimit) {
-  const scored = dedupeTools(candidates).map((tool) => scoreGuideTool(tool, category))
-  const selected = [
-    ...scored.filter((tool) => tool.relevanceLabel === 'STRONG').sort(sortGuideTools),
-    ...scored.filter((tool) => tool.relevanceLabel === 'MEDIUM').sort(sortGuideTools),
-  ].slice(0, targetLimit)
+function selectGuideTools(scoredTools) {
+  const deduped = dedupeTools(scoredTools)
+  const strong = sortGuideTools(deduped.filter(tool => tool.relevanceLabel === 'STRONG'))
+  const medium = sortGuideTools(deduped.filter(tool => tool.relevanceLabel === 'MEDIUM'))
+  const selected = dedupeTools([...strong, ...medium]).slice(0, GUIDE_MAX_SELECTED_TOOLS)
   return {
-    scored,
-    selected,
+    selected: selected.length >= GUIDE_MIN_SELECTED_TOOLS ? selected : selected,
     counts: {
-      total: scored.length,
-      STRONG: scored.filter((tool) => tool.relevanceLabel === 'STRONG').length,
-      MEDIUM: scored.filter((tool) => tool.relevanceLabel === 'MEDIUM').length,
-      WEAK: scored.filter((tool) => tool.relevanceLabel === 'WEAK').length,
-      INVALID: scored.filter((tool) => tool.relevanceLabel === 'INVALID').length,
+      candidateToolCount: scoredTools.length,
+      dedupedCandidateToolCount: deduped.length,
+      STRONG: strong.length,
+      MEDIUM: medium.length,
+      WEAK: deduped.filter(tool => tool.relevanceLabel === 'WEAK').length,
+      INVALID: deduped.filter(tool => tool.relevanceLabel === 'INVALID').length,
     },
   }
 }
 
 async function fetchGuideToolSelection(task, category) {
-  if (!category?.level2?.id) {
-    throw new Error('BUYER_GUIDE/CATEGORY_GUIDE requires categoryId; Guide generation cannot fall back to global tools')
-  }
-
-  const targetLimit = Math.min(GUIDE_MAX_SELECTED_TOOLS, Math.max(GUIDE_MIN_SELECTED_TOOLS, Number(task.limit) || GUIDE_MIN_SELECTED_TOOLS))
-  const candidates = await fetchGuideCandidateTools({ categoryId: category.level2.id })
-  const selection = selectGuideTools(candidates, category, targetLimit)
-  if (!selection.selected.length) {
-    throw new Error(`No STRONG or MEDIUM tools available for categoryId=${category.level2.id}`)
-  }
-
-  let fallbackTools = []
-  if (selection.selected.length < GUIDE_MIN_SELECTED_TOOLS) {
-    const fallbackCandidates = await fetchGuideFallbackTools({
-      category,
-      excludeIds: selection.selected.map((tool) => tool.id),
-    })
-    fallbackTools = dedupeTools(fallbackCandidates)
-      .map((tool) => scoreGuideTool(tool, category, { fallback: true }))
-      .filter((tool) => ['STRONG', 'MEDIUM'].includes(tool.relevanceLabel))
-      .sort(sortGuideTools)
-      .slice(0, GUIDE_FALLBACK_LIMIT)
-  }
-
+  const candidates = await fetchGuideCandidateTools(category?.level2?.id || task.categoryId)
+  const scored = candidates.map(tool => scoreGuideTool(tool, category))
+  const selection = selectGuideTools(scored)
+  const fallbackPool = selection.selected.length < GUIDE_MIN_SELECTED_TOOLS
+    ? await fetchGuideFallbackTools(category, selection.selected.map(tool => tool.id))
+    : []
+  const fallbackTools = sortGuideTools(
+    fallbackPool
+      .map(tool => scoreGuideTool(tool, category, { fallback: true }))
+      .filter(tool => ['STRONG', 'MEDIUM'].includes(tool.relevanceLabel))
+      .map(tool => ({ ...tool, isFallback: true })),
+  ).slice(0, GUIDE_FALLBACK_LIMIT)
   return {
-    ...selection,
+    selectedTools: selection.selected,
     fallbackTools,
+    diagnostics: {
+      ...selection.counts,
+      selectedToolsCount: selection.selected.length,
+      fallbackToolsCount: fallbackTools.length,
+      toolSelectionStrategy: 'l2-category-relevance-score',
+      selectedToolIds: selection.selected.map(tool => tool.id),
+      fallbackToolIds: fallbackTools.map(tool => tool.id),
+      toolSelectionDiagnostics: scored.map(tool => ({
+        toolId: tool.id,
+        toolName: tool.name,
+        score: tool.categoryRelevanceScore,
+        label: tool.relevanceLabel,
+        representativeScore: tool.representativeScore,
+        selectionReason: tool.selectionReason,
+        matchedCategories: tool.matchedCategories,
+      })),
+    },
   }
 }
 
-function requestedToolIds(task) {
-  const promptJson = task.promptJson && typeof task.promptJson === 'object' ? task.promptJson : {}
-  return {
-    primaryToolId: Number(task.primaryToolId || promptJson.primaryToolId || task.toolId) || null,
-    secondaryToolId: Number(task.secondaryToolId || promptJson.secondaryToolId) || null,
-  }
+async function fetchTool(toolId) {
+  if (!toolId) return null
+  return prisma.aiTool.findFirst({
+    where: { id: Number(toolId), toolStatus: { in: ['ONLINE', 'ACTIVE'] }, handle: { not: '' }, name: { not: '' } },
+    include: toolInclude(),
+  })
 }
 
-async function fetchCompareTools(task) {
-  const { primaryToolId, secondaryToolId } = requestedToolIds(task)
-  const limit = Math.min(30, Math.max(2, Number(task.limit) || 5))
+async function fetchToolsByIds(ids, max) {
+  const normalized = [...new Set((ids || []).map(Number).filter(Number.isFinite))].slice(0, max)
+  if (!normalized.length) return []
+  const rows = await prisma.aiTool.findMany({
+    where: { id: { in: normalized }, toolStatus: { in: ['ONLINE', 'ACTIVE'] }, handle: { not: '' }, name: { not: '' } },
+    include: toolInclude(),
+  })
+  const byId = new Map(rows.map(row => [row.id, row]))
+  return normalized.map(id => byId.get(id)).filter(Boolean)
+}
 
-  let primaryTool = null
-  let secondaryTool = null
-  if (primaryToolId) {
-    primaryTool = (await fetchTools({ toolId: primaryToolId, limit: 1 }))[0] || null
-    if (!primaryTool) throw new Error(`primaryToolNotFound: ${primaryToolId}`)
-  }
-  if (secondaryToolId) {
-    secondaryTool = (await fetchTools({ toolId: secondaryToolId, limit: 1 }))[0] || null
-    if (!secondaryTool) throw new Error(`secondaryToolNotFound: ${secondaryToolId}`)
-  }
-  if (primaryTool && secondaryTool && primaryTool.id === secondaryTool.id) {
-    throw new Error('secondaryToolSameAsPrimary')
-  }
-
-  const inferredCategoryId = Number(task.categoryId)
-    || Number(primaryTool?.toolCategories?.[0]?.categoryId)
-    || null
-  const candidates = await fetchTools({ categoryId: inferredCategoryId, limit })
-  if (!primaryTool) primaryTool = candidates[0] || null
-  if (!secondaryTool) secondaryTool = candidates.find(tool => tool.id !== primaryTool?.id) || null
-
-  if (!primaryTool) throw new Error('primaryToolNotFound')
-  if (!secondaryTool) throw new Error('secondaryToolNotFound: no distinct tool available in the selected category')
-
-  const tools = Array.from(new Map([primaryTool, secondaryTool, ...candidates].map(tool => [tool.id, tool])).values())
-  const selectedToolStrategy = secondaryToolId
-    ? 'explicit-primary-secondary'
-    : primaryToolId
-      ? 'task-toolId-primary-category-secondary'
-      : 'category-ranked-primary-secondary'
-
-  return { tools, primaryTool, secondaryTool, selectedToolStrategy, inferredCategoryId }
+function baseBrief(task, category, type) {
+  const brief = taskBrief(task)
+  const targetKeyword = String(brief.targetKeyword || '').trim()
+  const audience = String(brief.audience || '').trim()
+  const searchIntent = String(brief.searchIntent || '').trim()
+  const pageGoal = String(brief.pageGoal || '').trim()
+  return { brief, targetKeyword, audience, searchIntent, pageGoal }
 }
 
 function buildSlug(task, category, tools, suffix) {
@@ -654,126 +607,260 @@ function buildSlug(task, category, tools, suffix) {
   return slugify(`${base}${suffix ? `-${suffix}` : ''}`)
 }
 
-export async function buildContentSourceData(task) {
-  const type = String(task.contentType || '').trim().toUpperCase()
-  if (!SUPPORTED_CONTENT_TYPES.has(type)) {
-    throw new Error(`unsupportedContentType: ${type || '(empty)'}`)
-  }
-
-  if (type === 'COMPARISON' || type === 'ALTERNATIVE') {
-    const selection = await fetchCompareTools(task)
-    const categoryId = Number(task.categoryId) || selection.inferredCategoryId
-    const [category, relatedCategories] = await Promise.all([
-      fetchCategory(categoryId),
-      fetchRelatedCategories(categoryId),
-    ])
-    if (task.categoryId && !category) {
-      throw new Error(`categoryNotFound: categoryId=${task.categoryId}`)
-    }
-    return buildCompareSourceData(task, category, selection.tools, relatedCategories, selection)
-  }
-
-  const [category, relatedCategories] = await Promise.all([
-    fetchCategory(task.categoryId),
-    fetchRelatedCategories(task.categoryId),
-  ])
-
-  if (!task.categoryId) {
-    throw new Error('BUYER_GUIDE/CATEGORY_GUIDE requires categoryId; Guide generation cannot fall back to global tools')
-  }
-  if (!category) {
-    throw new Error(`分类不存在：categoryId=${task.categoryId}`)
-  }
-  const selection = await fetchGuideToolSelection(task, category)
-  if (!selection.selected.length) {
-    throw new Error('没有找到可用于生成的已发布 AI 工具数据')
-  }
-
-  return buildGuideSourceData(task, category, selection.selected, relatedCategories, selection)
-}
-
-function buildGuideSourceData(task, category, tools, relatedCategories, selection = null) {
-  const requestedType = String(task.contentType || '').trim().toUpperCase()
-  if (!['BUYER_GUIDE', 'CATEGORY_GUIDE', 'TUTORIAL'].includes(requestedType)) {
-    throw new Error(`unsupportedContentType: ${requestedType || '(empty)'}`)
-  }
-  const contentType = requestedType
-  const slug = buildSlug(task, category, tools, contentType === 'TUTORIAL' ? 'tutorial' : '')
-  const mappedTools = tools.map(mapTool)
-  const primaryTool = task.toolId ? mappedTools[0] || null : null
-  const fallbackTools = (selection?.fallbackTools || []).map(mapTool)
-
+function sourceEnvelope(task, contentType, slug, tools, sourceMap, input, inputValidation, extra = {}) {
+  const mappedTools = tools.map(tool => mapToolForValidation(tool, extra.validationToolOptions || {}))
+  const byId = new Map(mappedTools.map(tool => [tool.id, tool]))
+  const mappedSelectedTools = extra.selectedTools
+    ? extra.selectedTools.map(tool => mapToolForValidation(tool, extra.validationToolOptions || {}))
+    : ['BUYER_GUIDE'].includes(contentType) ? mappedTools : undefined
+  const mappedFallbackTools = extra.fallbackTools
+    ? extra.fallbackTools.map(tool => mapToolForValidation(tool, extra.validationToolOptions || {}))
+    : undefined
   return {
-    task: 'generate_guide',
+    task: ['COMPARISON', 'ALTERNATIVE'].includes(contentType) ? 'generate_compare' : 'generate_guide',
     contentType,
     slug,
-    canonicalPath: `/guides/${slug}`,
+    canonicalPath: `${['COMPARISON', 'ALTERNATIVE'].includes(contentType) ? '/compare/' : '/guides/'}${slug}`,
     language: 'en',
-    audience: 'buyers evaluating AI tools',
-    intent: contentType === 'TUTORIAL' ? 'tutorial' : 'choose_tools',
+    tools: mappedTools,
+    topTools: ['BUYER_GUIDE', 'CATEGORY_GUIDE', 'TUTORIAL'].includes(contentType) ? mappedTools : undefined,
+    categoryTopTools: ['COMPARISON', 'ALTERNATIVE'].includes(contentType) ? mappedTools : undefined,
+    sources: flattenSourceMap(sourceMap),
+    aiInput: input,
+    inputValidation: { ...inputValidation, selectedToolStrategy: extra.selectedToolStrategy || null },
+    selectedToolStrategy: extra.selectedToolStrategy || null,
+    selectedTools: mappedSelectedTools,
+    fallbackTools: mappedFallbackTools,
+    toolSelectionDiagnostics: extra.toolSelectionDiagnostics || null,
+    primaryTool: extra.primaryTool ? byId.get(extra.primaryTool.id) || null : null,
+    secondaryTool: extra.secondaryTool ? byId.get(extra.secondaryTool.id) || null : null,
+    category: extra.category || null,
+    relatedCategories: extra.relatedCategories || [],
+    comparisonType: extra.comparisonType,
+    requiredCriteria: extra.requiredCriteria || [],
+    intent: input.searchIntent || input.comparisonIntent || null,
+    audience: input.audience || input.targetAudience || null,
+  }
+}
+
+async function buildBuyerGuide(task, category, relatedCategories) {
+  const { brief, targetKeyword, audience, searchIntent, pageGoal } = baseBrief(task, category, 'BUYER_GUIDE')
+  if (!category?.level2?.id) throw new Error('BUYER_GUIDE requires categoryId; Guide generation cannot fall back to global tools')
+  const explicitIds = brief.selectedToolIds || brief.toolIds
+  const selection = explicitIds?.length
+    ? {
+        selectedTools: sortGuideTools(
+          (await fetchToolsByIds(explicitIds, 10))
+            .map(tool => scoreGuideTool(tool, category))
+            .filter(tool => ['STRONG', 'MEDIUM'].includes(tool.relevanceLabel)),
+        ).slice(0, 10),
+        fallbackTools: [],
+        diagnostics: { toolSelectionStrategy: 'explicit-selected-tools-category-relevance' },
+      }
+    : await fetchGuideToolSelection(task, category)
+  const tools = selection.selectedTools
+  const fallbackTools = selection.fallbackTools || []
+  const criteria = normalizeCriteria(brief.decisionCriteria)
+  const relevanceTerms = [targetKeyword, ...criteria.map(row => row.name)].filter(Boolean)
+  const toolFacts = tools.map(tool => compactToolFacts(tool, { relevanceTerms, maxClaims: 6, maxPlans: 4 }))
+  const sourceMap = buildSourceMap([...tools, ...fallbackTools], { relevanceTerms, maxClaims: 6, maxPlans: 4, includePlatforms: true, maxSources: 30 })
+  const selectedTools = tools.map(tool => ({
+    id: tool.id,
+    handle: tool.handle,
+    name: tool.name,
+    categoryRelevanceScore: tool.categoryRelevanceScore,
+    relevanceLabel: tool.relevanceLabel,
+    matchedCategories: matchedCategoriesForTool(tool),
+    selectionReason: tool.selectionReason,
+  }))
+  const candidate = {
+    pageType: 'GUIDE', contentType: 'BUYER_GUIDE', targetKeyword, pageGoal, searchIntent, audience,
+    categoryContext: categoryContext(category), selectedTools, toolFacts, decisionCriteria: criteria, sourceMap,
+    internalLinks: internalLinksFor({ category, tools, relatedCategories, extra: brief.internalLinks }),
+  }
+  const { input, validation } = enforceInputContract('BUYER_GUIDE', candidate)
+  const strategy = explicitIds?.length ? 'explicit-selected-tools-category-relevance' : 'l2-category-relevance-score'
+  const slug = buildSlug(task, category, tools, '')
+  return sourceEnvelope(task, 'BUYER_GUIDE', slug, tools, sourceMap, input, validation, {
     category: category ? { level1: category.level1, level2: category.level2 } : null,
     relatedCategories,
-    primaryTool,
-    topTools: mappedTools,
-    tools: mappedTools,
-    selectedTools: mappedTools,
+    selectedToolStrategy: strategy,
+    selectedTools: tools,
     fallbackTools,
-    sources: collectSources([...tools, ...(selection?.fallbackTools || [])]),
-    selectedToolStrategy: task.toolId ? 'explicit-guide-tool' : 'category-relevance-ranked-tools',
-    toolSelectionDiagnostics: selection
-      ? {
-          candidateCount: selection.counts.total,
-          relevanceCounts: {
-            STRONG: selection.counts.STRONG,
-            MEDIUM: selection.counts.MEDIUM,
-            WEAK: selection.counts.WEAK,
-            INVALID: selection.counts.INVALID,
-          },
-          selectedCount: mappedTools.length,
-          fallbackCount: fallbackTools.length,
-          minSelectedTools: GUIDE_MIN_SELECTED_TOOLS,
-          maxSelectedTools: GUIDE_MAX_SELECTED_TOOLS,
-        }
-      : null,
-    siteRules: {
-      brand: 'AISeekTools',
-      forbiddenClaims: ['unverified pricing', 'guaranteed outcomes', 'legal advice', 'medical advice', 'financial advice'],
-    },
-  }
+    toolSelectionDiagnostics: selection.diagnostics,
+    validationToolOptions: { relevanceTerms },
+  })
 }
 
-function buildCompareSourceData(task, category, tools, relatedCategories, selection) {
-  const mappedTools = tools.map(mapTool)
-  const primaryTool = mappedTools.find(tool => tool.id === selection.primaryTool.id) || null
-  const secondaryTool = mappedTools.find(tool => tool.id === selection.secondaryTool.id) || null
-  const contentType = String(task.contentType || '').trim().toUpperCase() === 'ALTERNATIVE'
-    ? 'ALTERNATIVE'
-    : 'COMPARISON'
-  const comparisonType = contentType === 'ALTERNATIVE'
-    ? 'ALTERNATIVES'
-    : (secondaryTool ? 'TOOL_VS_TOOL' : 'MULTI_TOOL')
-  const slug = buildSlug(task, category, tools, contentType === 'ALTERNATIVE' ? 'alternatives' : 'comparison')
-
-  return {
-    task: 'generate_compare',
-    contentType,
-    comparisonType,
-    slug,
-    canonicalPath: `/compare/${slug}`,
-    language: 'en',
-    primaryTool,
-    secondaryTool,
-    selectedToolStrategy: selection.selectedToolStrategy,
-    tools: mappedTools,
-    category: category?.level2 || null,
-    categoryTopTools: mappedTools,
-    relatedCategories,
-    knownPricing: mappedTools.flatMap((tool) => [
-      ...(tool.pricing || []),
-      ...(tool.pricingPlans || []).map((plan) => plan.rawText || plan.planName).filter(Boolean),
-    ]),
-    knownClaims: mappedTools.flatMap((tool) => tool.claims || []),
-    sources: collectSources(tools),
-    requiredCriteria: ['Ease of use', 'Output quality', 'Integrations', 'Pricing', 'Best fit'],
+async function buildCategoryGuide(task, category, relatedCategories) {
+  const { brief, targetKeyword, audience, searchIntent, pageGoal } = baseBrief(task, category, 'CATEGORY_GUIDE')
+  const explicitIds = brief.representativeToolIds || brief.selectedToolIds
+  const tools = explicitIds?.length
+    ? await fetchToolsByIds(explicitIds, 5)
+    : await fetchRankedTools({ categoryId: task.categoryId, limit: Math.min(5, Math.max(3, Number(task.limit) || 3)) })
+  const representativeTools = tools.map(tool => compactToolFacts(tool, { includePricing: false, includeClaims: false, maxFeatures: 5, maxPros: 3, maxCons: 3, maxUseCases: 4, descriptionMax: 350 }))
+  const sourceMap = buildSourceMap(tools, { includePricing: false, includeClaims: false, includePlatforms: false, maxSources: 12 })
+  const candidate = {
+    pageType: 'GUIDE', contentType: 'CATEGORY_GUIDE', targetKeyword, pageGoal, searchIntent, audience,
+    categoryContext: categoryContext(category), relatedCategories, representativeTools, sourceMap,
+    internalLinks: internalLinksFor({ category, tools, relatedCategories, extra: brief.internalLinks }),
   }
+  const { input, validation } = enforceInputContract('CATEGORY_GUIDE', candidate)
+  const slug = buildSlug(task, category, tools, '')
+  return sourceEnvelope(task, 'CATEGORY_GUIDE', slug, tools, sourceMap, input, validation, {
+    category: category ? { level1: category.level1, level2: category.level2 } : null,
+    relatedCategories, selectedToolStrategy: explicitIds?.length ? 'explicit-representative-tools' : 'category-representative-tools',
+    validationToolOptions: { includePricing: false, includeClaims: false },
+  })
+}
+
+async function buildTutorial(task, category, relatedCategories) {
+  const { brief, targetKeyword, audience, searchIntent, pageGoal } = baseBrief(task, category, 'TUTORIAL')
+  const primaryTool = await fetchTool(brief.primaryToolId || task.toolId)
+  const relatedTools = await fetchToolsByIds(brief.relatedToolIds || [], 2)
+  const tutorialGoal = String(brief.tutorialGoal || '').trim()
+  const workflowContext = Array.isArray(brief.workflowContext) ? brief.workflowContext.slice(0, 15) : []
+  const relevanceTerms = [tutorialGoal, ...workflowContext.flatMap(step => typeof step === 'string' ? [step] : [step?.title, step?.instruction])].filter(Boolean)
+  const tools = [primaryTool, ...relatedTools].filter(Boolean)
+  const primaryFact = primaryTool ? compactToolFacts(primaryTool, { relevanceTerms, includePricing: false, maxClaims: 6, maxPlans: 0 }) : null
+  const relatedFacts = relatedTools.map(tool => compactToolFacts(tool, { relevanceTerms, includePricing: false, maxClaims: 3, maxPlans: 0, descriptionMax: 350 }))
+  const sourceMap = buildSourceMap(tools, { relevanceTerms, includePricing: false, maxClaims: 6, includePlatforms: true, maxSources: 12 })
+  const candidate = {
+    pageType: 'GUIDE', contentType: 'TUTORIAL', targetKeyword, pageGoal, searchIntent, audience,
+    tutorialGoal,
+    prerequisiteKnowledge: normalizeStringList(brief.prerequisiteKnowledge || brief.prerequisites, 10),
+    primaryTool: primaryFact,
+    workflowContext,
+    commonMistakes: normalizeStringList(brief.commonMistakes, 10),
+    outputChecklist: normalizeStringList(brief.outputChecklist, 10),
+    relatedTools: relatedFacts,
+    sourceMap,
+    internalLinks: internalLinksFor({ category: null, tools, relatedCategories: [], extra: brief.internalLinks }),
+  }
+  const { input, validation } = enforceInputContract('TUTORIAL', candidate)
+  const slug = buildSlug(task, category, tools, 'tutorial')
+  return sourceEnvelope(task, 'TUTORIAL', slug, tools, sourceMap, input, validation, {
+    category: category ? { level1: category.level1, level2: category.level2 } : null,
+    relatedCategories, primaryTool, selectedToolStrategy: 'explicit-tutorial-primary-and-workflow',
+    validationToolOptions: { relevanceTerms, includePricing: false },
+  })
+}
+
+function sharedUseCases(primary, secondary, explicit) {
+  const supplied = normalizeStringList(explicit, 8)
+  if (supplied.length) return supplied
+  const secondarySet = new Set((secondary?.useCases || []).map(value => String(value).toLowerCase()))
+  return (primary?.useCases || []).filter(value => secondarySet.has(String(value).toLowerCase())).slice(0, 8)
+}
+
+function featureComparisonFacts(tools, criteria) {
+  return criteria.map(criterion => ({
+    dimension: criterion.name,
+    tools: tools.map(tool => ({
+      toolId: tool.id,
+      toolName: tool.name,
+      facts: [...(tool.feature || []), ...(tool.pros || []), ...(tool.cons || [])]
+        .filter(value => String(value).toLowerCase().includes(criterion.name.toLowerCase().split(' ')[0]))
+        .slice(0, 5),
+    })),
+  }))
+}
+
+function pricingComparisonFacts(tools) {
+  return tools.map(tool => ({
+    toolId: tool.id,
+    toolName: tool.name,
+    pricingSummary: (tool.pricing || []).slice(0, 5),
+    plans: (tool.pricingPlans || []).slice(0, 4).map(plan => ({
+      planName: plan.planName, billingInterval: plan.billingInterval, isFree: plan.isFree,
+      hasTrial: plan.hasTrial, usageLimit: plan.usageLimit || null,
+    })),
+  }))
+}
+
+async function buildComparison(task, category, relatedCategories) {
+  const brief = taskBrief(task)
+  const primaryTool = await fetchTool(brief.primaryToolId || task.toolId)
+  let secondaryTool = await fetchTool(brief.secondaryToolId)
+  let strategy = secondaryTool ? 'explicit-primary-secondary' : 'missing-secondary'
+  if (!secondaryTool && brief.autoSelectSecondaryTool === true && primaryTool) {
+    const inferredCategoryId = Number(task.categoryId) || Number(primaryTool.toolCategories?.[0]?.categoryId) || null
+    secondaryTool = (await fetchRankedTools({ categoryId: inferredCategoryId, limit: 1, excludeIds: [primaryTool.id] }))[0] || null
+    strategy = secondaryTool ? 'explicit-auto-select-secondary' : 'missing-secondary'
+  }
+  const tools = [primaryTool, secondaryTool].filter(Boolean)
+  const criteria = normalizeCriteria(brief.decisionCriteria)
+  const comparisonIntent = String(brief.comparisonIntent || '').trim()
+  const targetAudience = String(brief.targetAudience || '').trim()
+  const useCases = primaryTool && secondaryTool ? sharedUseCases(primaryTool, secondaryTool, brief.sharedUseCases) : []
+  const relevanceTerms = [comparisonIntent, ...criteria.map(row => row.name), ...useCases].filter(Boolean)
+  const compactTools = tools.map(tool => compactToolFacts(tool, { relevanceTerms, maxClaims: 6, maxPlans: 4 }))
+  const sourceMap = buildSourceMap(tools, { relevanceTerms, maxClaims: 6, maxPlans: 4, includePlatforms: true, maxSources: 20 })
+  const candidate = {
+    pageType: 'COMPARE', contentType: 'COMPARISON', comparisonIntent, targetAudience,
+    primaryTool: compactTools.find(tool => tool.id === primaryTool?.id) || null,
+    secondaryTool: compactTools.find(tool => tool.id === secondaryTool?.id) || null,
+    sharedUseCases: useCases,
+    decisionCriteria: criteria,
+    featureComparisonFacts: featureComparisonFacts(tools, criteria),
+    pricingComparisonFacts: pricingComparisonFacts(tools),
+    sourceMap,
+    internalLinks: internalLinksFor({ category, tools, relatedCategories: [], extra: brief.internalLinks }),
+  }
+  const { input, validation } = enforceInputContract('COMPARISON', candidate)
+  if (!secondaryTool && !validation.missingRequiredFields.includes('missingSecondaryTool')) validation.missingRequiredFields.push('missingSecondaryTool')
+  validation.passed = validation.missingRequiredFields.length === 0
+  const slug = buildSlug(task, category, tools, 'comparison')
+  return sourceEnvelope(task, 'COMPARISON', slug, tools, sourceMap, input, validation, {
+    category: category?.level2 || null, relatedCategories, primaryTool, secondaryTool, comparisonType: 'TOOL_VS_TOOL',
+    selectedToolStrategy: strategy, requiredCriteria: criteria.map(row => row.name), validationToolOptions: { relevanceTerms },
+  })
+}
+
+async function buildAlternative(task, category, relatedCategories) {
+  const brief = taskBrief(task)
+  const primaryTool = await fetchTool(brief.primaryToolId || task.toolId)
+  const alternativeTools = await fetchToolsByIds(brief.alternativeToolIds || [], 8)
+  const tools = [primaryTool, ...alternativeTools.filter(tool => tool.id !== primaryTool?.id)].filter(Boolean)
+  const criteria = normalizeCriteria(brief.selectionCriteria)
+  const dimensions = normalizeStringList(brief.comparisonDimensions, 10).length
+    ? normalizeStringList(brief.comparisonDimensions, 10)
+    : criteria.map(row => row.name).filter(Boolean)
+  const reasonToSwitch = String(brief.reasonToSwitch || '').trim()
+  const relevanceTerms = [reasonToSwitch, ...criteria.map(row => row.name), ...dimensions].filter(Boolean)
+  const compactTools = tools.map(tool => compactToolFacts(tool, { relevanceTerms, maxClaims: 5, maxPlans: 4 }))
+  const sourceMap = buildSourceMap(tools, { relevanceTerms, maxClaims: 5, maxPlans: 4, includePlatforms: true, maxSources: 30 })
+  const candidate = {
+    pageType: 'COMPARE', contentType: 'ALTERNATIVE',
+    primaryTool: compactTools.find(tool => tool.id === primaryTool?.id) || null,
+    alternativeTools: compactTools.filter(tool => tool.id !== primaryTool?.id),
+    reasonToSwitch,
+    selectionCriteria: criteria,
+    comparisonDimensions: dimensions,
+    pricingSummary: pricingComparisonFacts(tools),
+    sourceMap,
+    internalLinks: internalLinksFor({ category, tools, relatedCategories: [], extra: brief.internalLinks }),
+  }
+  const { input, validation } = enforceInputContract('ALTERNATIVE', candidate)
+  const slug = buildSlug(task, category, tools, 'alternatives')
+  return sourceEnvelope(task, 'ALTERNATIVE', slug, tools, sourceMap, input, validation, {
+    category: category?.level2 || null, relatedCategories, primaryTool, comparisonType: 'ALTERNATIVES',
+    selectedToolStrategy: 'explicit-primary-alternative-tools', requiredCriteria: criteria.map(row => row.name),
+    validationToolOptions: { relevanceTerms },
+  })
+}
+
+export async function buildContentSourceData(task) {
+  const type = String(task.contentType || '').trim().toUpperCase()
+  if (!SUPPORTED_CONTENT_TYPES.has(type)) throw new Error(`unsupportedContentType: ${type || '(empty)'}`)
+
+  const categoryId = Number(task.categoryId) || null
+  const [category, relatedCategories] = await Promise.all([fetchCategory(categoryId), fetchRelatedCategories(categoryId)])
+  if (categoryId && !category) throw new Error(`categoryNotFound: categoryId=${categoryId}`)
+
+  if (type === 'BUYER_GUIDE') return buildBuyerGuide(task, category, relatedCategories)
+  if (type === 'CATEGORY_GUIDE') return buildCategoryGuide(task, category, relatedCategories)
+  if (type === 'TUTORIAL') return buildTutorial(task, category, relatedCategories)
+  if (type === 'COMPARISON') return buildComparison(task, category, relatedCategories)
+  return buildAlternative(task, category, relatedCategories)
 }

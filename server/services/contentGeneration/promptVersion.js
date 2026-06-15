@@ -1,6 +1,6 @@
-import prisma from '~/server/utils/prisma'
-import { PRODUCTION_PROMPT_VERSION, contentRules } from './editorialRules'
-import { applyPromptTemplate, editorialSystemPrompt } from './prompts'
+import prisma from '../../utils/prisma.js'
+import { PRODUCTION_PROMPT_VERSION, contentRules } from './editorialRules.js'
+import { applyPromptTemplate, editorialSystemPrompt } from './prompts.js'
 
 export const PRODUCTION_MODEL = 'deepseek-v4-pro'
 export const PRODUCTION_TEMPERATURE = 0.25
@@ -8,9 +8,7 @@ export const PRODUCTION_MAX_TOKENS = 12000
 export const GENERATION_MODE = 'production-seo-draft'
 
 function promptNameFor(sourceData) {
-  return sourceData.task === 'generate_compare'
-    ? 'content-generation-compare-production'
-    : 'content-generation-guide-production'
+  return `content-generation-${String(sourceData.contentType || '').toLowerCase().replaceAll('_', '-')}-production`
 }
 
 async function ensureDefaultPromptVersion(sourceData) {
@@ -35,7 +33,9 @@ async function ensureDefaultPromptVersion(sourceData) {
         max_tokens: PRODUCTION_MAX_TOKENS,
         generationMode: GENERATION_MODE,
       },
-      rulesJson: sourceData.task === 'generate_compare' ? contentRules.compare : contentRules.guides,
+      rulesJson: sourceData.task === 'generate_compare'
+        ? contentRules.compare
+        : sourceData.contentType === 'BUYER_GUIDE' ? contentRules.buyerGuide : contentRules.guides,
       isActive: true,
     },
     update: { isActive: true },
@@ -48,6 +48,7 @@ export async function resolvePromptVersion(task, sourceData, sourcePrompt) {
     row = await prisma.contentGenerationPromptVersion.findUnique({
       where: { id: Number(task.promptVersionId) },
     })
+    if (row && row.version < PRODUCTION_PROMPT_VERSION) row = null
   }
   if (!row) row = await ensureDefaultPromptVersion(sourceData)
 
@@ -57,12 +58,20 @@ export async function resolvePromptVersion(task, sourceData, sourcePrompt) {
     : `${editorialSystemPrompt}\n\nPrompt-version-specific additional instructions:\n${versionSystemPrompt}`
   const userPrompt = applyPromptTemplate(row.userPromptTemplate, sourcePrompt, sourceData)
   const promptVersion = `${row.name}@${row.version}`
+  const previousPromptJson = task.promptJson && typeof task.promptJson === 'object' ? task.promptJson : {}
+  const preservedBrief = previousPromptJson.brief || previousPromptJson.input || Object.fromEntries(
+    Object.entries(previousPromptJson).filter(([key]) => ![
+      'promptVersion', 'promptVersionId', 'provider', 'model', 'temperature', 'max_tokens',
+      'generationMode', 'systemPrompt', 'userPrompt',
+    ].includes(key)),
+  )
 
   await prisma.contentGenerationTask.update({
     where: { id: Number(task.id) },
     data: {
       promptVersionId: row.id,
       promptJson: {
+        brief: preservedBrief,
         promptVersion,
         promptVersionId: row.id,
         provider: 'deepseek',
@@ -84,5 +93,6 @@ export async function resolvePromptVersion(task, sourceData, sourcePrompt) {
     promptVersion,
     systemPrompt,
     userPrompt,
+    brief: preservedBrief,
   }
 }

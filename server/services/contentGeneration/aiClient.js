@@ -2,7 +2,7 @@ import {
   PRODUCTION_MAX_TOKENS,
   PRODUCTION_MODEL,
   PRODUCTION_TEMPERATURE,
-} from './promptVersion'
+} from './promptVersion.js'
 
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1'
 const DEFAULT_TIMEOUT_MS = 300000
