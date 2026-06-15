@@ -89,6 +89,7 @@ export function validateSourceData(data) {
 
 export function validateGuideSourceData(data) {
   const errors = []
+  const warnings = []
   if (data.task !== 'generate_guide') errors.push('task must be generate_guide')
   if (!GUIDE_TYPES.has(data.contentType)) errors.push('contentType must be a guide-compatible type')
   if (!isSlug(data.slug)) errors.push('slug must be lowercase kebab-case')
@@ -99,10 +100,14 @@ export function validateGuideSourceData(data) {
     errors.push(`BUYER_GUIDE requires at least ${PRODUCTION_LIMITS.guide.minRecommendedTools} source tools`)
   }
   if (data.contentType === 'BUYER_GUIDE' && !data.category?.level2?.id) errors.push('BUYER_GUIDE requires category.level2')
+  if (['BUYER_GUIDE', 'CATEGORY_GUIDE'].includes(data.contentType) && !data.category?.level2?.id) {
+    errors.push(`${data.contentType} requires category.level2 and cannot use global popular tool fallback`)
+  }
+  validateGuideSelectedTools(data, errors, warnings)
   if (data.contentType === 'TUTORIAL' && !data.primaryTool && !data.category?.level2) {
     errors.push('TUTORIAL requires a primaryTool or level2 category')
   }
-  return result(errors, [], { missingToolFields: collectMissingToolFields(data.tools || []) })
+  return result(errors, warnings, { missingToolFields: collectMissingToolFields(data.tools || []) })
 }
 
 export function validateCompareSourceData(data) {
@@ -118,6 +123,65 @@ export function validateCompareSourceData(data) {
     errors.push('TOOL_VS_TOOL requires primaryTool and secondaryTool')
   }
   return result(errors, [], { missingToolFields: collectMissingToolFields(data.tools || []) })
+}
+
+function validateGuideSelectedTools(data, errors, warnings) {
+  if (!['BUYER_GUIDE', 'CATEGORY_GUIDE'].includes(data.contentType)) return
+  const selectedTools = Array.isArray(data.selectedTools) ? data.selectedTools : (data.tools || [])
+  const expectedLevel2 = data.category?.level2?.id
+  if (selectedTools.length < 5) errors.push('selectedTools must include at least 5 tools')
+  if (selectedTools.length > 10) errors.push('selectedTools must include no more than 10 tools')
+
+  const ids = selectedTools.map(tool => String(tool?.id || '')).filter(Boolean)
+  if (new Set(ids).size !== ids.length) errors.push('selectedTools must not contain duplicate toolId values')
+
+  const mediumCount = selectedTools.filter(tool => tool?.relevanceLabel === 'MEDIUM').length
+  if (selectedTools.length && mediumCount / selectedTools.length > 0.4) {
+    warnings.push('selectedTools contains more than 40% MEDIUM tools; review category focus before publishing')
+  }
+
+  for (const tool of selectedTools) {
+    const label = tool?.relevanceLabel
+    const handle = tool?.handle || tool?.name || tool?.id
+    if (['WEAK', 'INVALID'].includes(label)) {
+      errors.push(`selectedTools contains ${label} tool: ${handle}`)
+    }
+    if (!['STRONG', 'MEDIUM'].includes(label)) {
+      errors.push(`selectedTools missing valid relevanceLabel for ${handle}`)
+    }
+    if (expectedLevel2) {
+      const categoryIds = (tool?.matchedCategories || []).map(category => String(category.id))
+      if (!categoryIds.includes(String(expectedLevel2))) {
+        errors.push(`selectedTools tool ${handle} is not bound to current category_level2.id ${expectedLevel2}`)
+      }
+    }
+    if (isObviouslyUnrelatedGuideTool(tool, data.category?.level2)) {
+      errors.push(`selectedTools contains obviously unrelated tool for ${data.category?.level2?.handle}: ${handle}`)
+    }
+  }
+}
+
+function isObviouslyUnrelatedGuideTool(tool, category) {
+  const text = [
+    tool?.name,
+    tool?.handle,
+    tool?.description,
+    tool?.whatIsSummary,
+    ...(tool?.features || []),
+    ...(tool?.tags || []),
+    ...(tool?.useCases || []),
+    ...(tool?.matchedCategories || []).map(row => `${row.level1Handle || ''} ${row.handle || ''} ${row.name || ''}`),
+  ].filter(Boolean).join(' ').toLowerCase()
+
+  if (category?.handle === 'ai-summarizer') {
+    if (/\b(bitbucket|git|repository|devops|ci\/cd|code review|pull request)\b/i.test(text)) return true
+    if (/\b(zerogpt|ai detector|content detector|chatgpt detector|plagiarism checker)\b/i.test(text)) return true
+  }
+  if (category?.handle === 'ai-writing-assistants') {
+    if (/\b(copyleaks|ai detector|content detector|chatgpt detector)\b/i.test(text)) return true
+    if (/\b(notion|workspace|project management|calendar|wiki)\b/i.test(text) && !/\bwriting assistant|grammar|paraphras|rewrit|copywriting\b/i.test(text)) return true
+  }
+  return false
 }
 
 export function collectMissingToolFields(tools) {

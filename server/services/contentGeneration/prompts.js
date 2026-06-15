@@ -70,6 +70,16 @@ function compactTool(tool) {
     isFree: tool.isFree,
     hasPricingContext: Boolean(tool.pricingPlans?.length || tool.pricing?.length),
     hasClaims: Boolean(tool.claims?.length),
+    categoryRelevanceScore: tool.categoryRelevanceScore,
+    relevanceLabel: tool.relevanceLabel,
+    matchedCategories: (tool.matchedCategories || []).map((category) => ({
+      id: category.id,
+      name: category.name,
+      handle: category.handle,
+      level1Handle: category.level1Handle,
+    })),
+    selectionReason: tool.selectionReason,
+    isFallback: Boolean(tool.isFallback),
   }
 }
 
@@ -92,10 +102,17 @@ function compactGuideSource(sourceData) {
       : null,
     relatedCategories: (sourceData.relatedCategories || []).map(compactCategory),
     primaryTool: sourceData.primaryTool ? compactTool(sourceData.primaryTool) : null,
+    selectedTools: (sourceData.selectedTools || sourceData.tools || []).map(compactTool),
+    fallbackTools: (sourceData.fallbackTools || []).map(compactTool),
     tools: (sourceData.tools || []).map(compactTool),
+    toolSelectionDiagnostics: sourceData.toolSelectionDiagnostics || null,
     sources: sourceData.sources || [],
     siteRules: sourceData.siteRules,
     fieldPolicy: [
+      'Only recommend tools from selectedTools in tool_callout blocks.',
+      'Do not introduce tools outside selectedTools except in a clearly labeled alternatives/fallback section.',
+      'Fallback tools are related alternatives only; they must not be framed as primary recommendations.',
+      'Prioritize STRONG tools. If a MEDIUM tool is used, explain its limitation clearly.',
       'Every tool note must use only that tool object.',
       'If pricingPlans and pricingSummary are empty, do not mention plans, credits, seats, trials, or limits.',
       'If keyClaims is empty, do not invent integrations, language counts, or performance claims.',
