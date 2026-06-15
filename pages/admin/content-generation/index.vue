@@ -176,6 +176,22 @@ function hasBrief(row) {
   return !!(row?.promptJson?.brief && Object.keys(row.promptJson.brief).length)
 }
 
+function batchCreateStatusLabel(status) {
+  const map = {
+    created: '已创建',
+    skipped: '已跳过',
+    failed: '失败',
+  }
+  return map[status] || status || '-'
+}
+
+function batchCreateStatusType(status) {
+  if (status === 'created') return 'success'
+  if (status === 'skipped') return 'warning'
+  if (status === 'failed') return 'danger'
+  return 'info'
+}
+
 function canBatchGenerate(row) {
   return ['draft', 'pending', 'review_queue', 'failed'].includes(row?.status) && hasBrief(row)
 }
@@ -576,9 +592,16 @@ watch(() => createForm.contentType, (contentType) => {
         style="width: 100%"
         @selection-change="onSelectionChange"
       >
-        <el-table-column type="selection" width="48" />
-        <el-table-column prop="id" label="ID" width="72" />
-        <el-table-column prop="title" label="任务标题" min-width="180" show-overflow-tooltip />
+        <el-table-column type="selection" width="48" fixed="left" />
+        <el-table-column prop="id" label="ID" width="72" fixed="left" />
+        <el-table-column prop="title" label="任务标题" min-width="180" show-overflow-tooltip fixed="left" />
+        <el-table-column label="任务状态" width="110" align="center" fixed="left">
+          <template #default="{ row }">
+            <el-tag :type="statusType(row.status)" effect="light">
+              {{ statusLabel(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="slug" label="Slug" min-width="160" show-overflow-tooltip />
         <el-table-column prop="contentType" label="内容类型" width="140" show-overflow-tooltip />
         <el-table-column label="分类/对比" min-width="180" show-overflow-tooltip>
@@ -589,13 +612,6 @@ watch(() => createForm.contentType, (contentType) => {
         <el-table-column prop="score" label="评分" width="88" />
         <el-table-column prop="wordCount" label="字数" width="92" />
         <el-table-column prop="errorMessage" label="错误" min-width="180" show-overflow-tooltip />
-        <el-table-column label="状态" width="110" align="center">
-          <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" effect="light">
-              {{ statusLabel(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
         <el-table-column label="生成时间" width="168">
           <template #default="{ row }">
             {{ formatDt(row.generatedAt || row.updatedAt) }}
@@ -692,9 +708,15 @@ watch(() => createForm.contentType, (contentType) => {
         <el-table-column prop="title" label="title" min-width="180" show-overflow-tooltip />
         <el-table-column prop="slug" label="slug" min-width="160" show-overflow-tooltip />
         <el-table-column prop="score" label="score" width="80" />
-        <el-table-column prop="wordCount" label="wordCount" width="100" />
-        <el-table-column prop="status" label="status" width="100" />
-        <el-table-column prop="errorMessage" label="errorMessage" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="wordCount" label="字数" width="100" />
+        <el-table-column label="任务状态" width="110" align="center">
+          <template #default="{ row }">
+            <el-tag :type="statusType(row.status)" effect="light">
+              {{ statusLabel(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="errorMessage" label="错误" min-width="220" show-overflow-tooltip />
         <el-table-column label="warnings" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
             {{ Array.isArray(row.warnings) ? row.warnings.length : 0 }}
@@ -755,8 +777,14 @@ watch(() => createForm.contentType, (contentType) => {
         border
         size="small"
       >
-        <el-table-column prop="input" label="input" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="status" label="status" width="100" />
+        <el-table-column prop="input" label="输入" min-width="160" show-overflow-tooltip />
+        <el-table-column label="结果" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="batchCreateStatusType(row.status)" effect="light">
+              {{ batchCreateStatusLabel(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="taskId" label="taskId" width="90" />
         <el-table-column prop="title" label="title" min-width="180" show-overflow-tooltip />
         <el-table-column prop="slug" label="slug" min-width="160" show-overflow-tooltip />

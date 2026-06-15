@@ -22,6 +22,8 @@ export const PRODUCTION_LIMITS = {
     maxFaqAnswerWords: 85,
     minToolNoteWords: 110,
     maxToolNoteWords: 130,
+    minToolNoteWordsPass: 100,
+    maxToolNoteWordsPass: 140,
     minCriteria: 6,
   },
   guide: {

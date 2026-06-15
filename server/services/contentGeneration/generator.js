@@ -15,6 +15,10 @@ import {
   resolvePromptVersion,
 } from './promptVersion.js'
 import { countEnglishWords, validateGeneratedContentPage, validateSourceData } from './validators.js'
+import {
+  formatParseErrorMessage,
+  safeJsonParse,
+} from './jsonParse.js'
 
 const EXPAND_RETRY_LIMIT = 1
 const BUYER_GUIDE_FORBIDDEN_REPLACEMENTS = [
@@ -30,10 +34,34 @@ const BUYER_GUIDE_FORBIDDEN_REPLACEMENTS = [
 ]
 
 function parseGeneratedJson(rawOutput) {
-  const trimmed = rawOutput.trim()
-  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
-  const jsonText = fenced?.[1]?.trim() || trimmed
-  return JSON.parse(jsonText)
+  const result = safeJsonParse(rawOutput)
+  if (!result.ok) {
+    const error = new Error(formatParseErrorMessage(result))
+    error.code = 'CONTENT_JSON_PARSE_FAILED'
+    error.parseMeta = result
+    throw error
+  }
+  return { content: result.data, parseMeta: result }
+}
+
+function buildParseFailureValidation(parseMeta, message) {
+  return {
+    ok: false,
+    passed: false,
+    errors: [message],
+    warnings: parseMeta?.repaired ? ['JSON structure repair was attempted but parsing still failed'] : [],
+    checks: {},
+    metrics: { wordCount: 0, blockCount: 0 },
+    missingToolFields: [],
+    parseErrorPosition: parseMeta?.position ?? null,
+    parseErrorSnippet: parseMeta?.snippet ?? null,
+    parseErrorLine: parseMeta?.line ?? null,
+    parseErrorColumn: parseMeta?.column ?? null,
+    parseRepaired: Boolean(parseMeta?.repaired),
+    parseStrategy: parseMeta?.strategy ?? null,
+    rawOutputLength: parseMeta?.rawLength ?? null,
+    typedWriteStatus: 'not-written-review-stage',
+  }
 }
 
 function enforceReviewState(content) {
@@ -192,7 +220,7 @@ function shouldExpand(validation) {
   return Object.entries(validation.checks || {}).some(([name, row]) => expandable.has(name) && row?.passed === false)
 }
 
-function buildValidationPayload(validation, metadata) {
+export function buildValidationPayload(validation, metadata) {
   const metrics = validation?.metrics || {}
   return {
     ...validation,
@@ -231,6 +259,15 @@ function buildValidationPayload(validation, metadata) {
     provider: metadata.provider,
     usage: metadata.usage,
     generatedAt: new Date().toISOString(),
+    rawOutputLength: metadata.rawOutputLength ?? null,
+    jsonParseRepaired: metadata.jsonParseRepaired ?? null,
+    jsonParseStrategy: metadata.jsonParseStrategy ?? null,
+    parseErrorPosition: metadata.parseErrorPosition ?? validation?.parseErrorPosition ?? null,
+    parseErrorSnippet: metadata.parseErrorSnippet ?? validation?.parseErrorSnippet ?? null,
+    parseErrorLine: metadata.parseErrorLine ?? validation?.parseErrorLine ?? null,
+    parseErrorColumn: metadata.parseErrorColumn ?? validation?.parseErrorColumn ?? null,
+    parseRepaired: metadata.parseRepaired ?? validation?.parseRepaired ?? null,
+    parseStrategy: metadata.parseStrategy ?? validation?.parseStrategy ?? null,
   }
 }
 
@@ -260,6 +297,7 @@ export async function generateContentForTask(taskId, event, auth, streamHandlers
   let expandRetryCount = 0
   let provider = 'https://api.deepseek.com/v1'
   let usage = null
+  let jsonParseMeta = null
 
   try {
     await emit('phase', { phase: 'building_source' })
@@ -302,7 +340,12 @@ export async function generateContentForTask(taskId, event, auth, streamHandlers
       rawOutput = aiResult.rawOutput
 
       await emit('phase', { phase: 'parsing' })
-      parsedContent = parseGeneratedJson(rawOutput)
+      const parsed = parseGeneratedJson(rawOutput)
+      parsedContent = parsed.content
+      jsonParseMeta = parsed.parseMeta
+      if (jsonParseMeta?.repaired) {
+        await emit('phase', { phase: 'parsing', repaired: true, strategy: jsonParseMeta.strategy })
+      }
       enforceReviewState(parsedContent)
       if (!parsedContent.sources?.length && sourceData.sources?.length) parsedContent.sources = sourceData.sources
       if (sourceData.contentType === 'BUYER_GUIDE') {
@@ -339,6 +382,9 @@ export async function generateContentForTask(taskId, event, auth, streamHandlers
       toolCount: sourceData.tools?.length || 0,
       sourceCount: sourceData.sources?.length || 0,
       normalizedSources: validationResult?.normalizedSources || sourceData.sources || [],
+      jsonParseRepaired: Boolean(jsonParseMeta?.repaired),
+      jsonParseStrategy: jsonParseMeta?.strategy || null,
+      rawOutputLength: rawOutput?.length || 0,
     })
 
     if (!validationResult?.ok) {
@@ -380,32 +426,52 @@ export async function generateContentForTask(taskId, event, auth, streamHandlers
   catch (error) {
     if (error?.statusCode === 422) throw error
     apiRetryCount += Number(error?.retryCount || 0)
-    const message = error instanceof Error ? error.message : String(error)
-    const validationJson = buildValidationPayload(validationResult || {
-      ok: false,
-      passed: false,
-      errors: [message],
-      warnings: [],
-      checks: {},
-      metrics: {},
-      missingToolFields: sourceData ? validateSourceData(sourceData).missingToolFields || [] : [],
-    }, {
-      promptVersion: promptVersion?.promptVersion || null,
-      promptVersionId: promptVersion?.id || null,
-      retryCount: apiRetryCount + expandRetryCount,
-      apiRetryCount,
-      expandRetryCount,
-      provider,
-      usage,
-      contentType: sourceData?.contentType || task.contentType?.toUpperCase?.() || task.contentType,
-      generatorName: sourceData?.task === 'generate_compare'
-        ? 'compare-generator'
-        : sourceData?.task === 'generate_guide' ? 'guide-generator' : 'unsupported-generator',
-      selectedToolStrategy: sourceData?.selectedToolStrategy || null,
-      toolCount: sourceData?.tools?.length || 0,
-      sourceCount: sourceData?.sources?.length || 0,
-      normalizedSources: validationResult?.normalizedSources || sourceData?.sources || [],
-    })
+    const isParseError = error?.code === 'CONTENT_JSON_PARSE_FAILED' || error?.parseMeta
+    const parseMeta = error?.parseMeta || null
+    const message = isParseError
+      ? formatParseErrorMessage(parseMeta || { errorMessage: error?.message })
+      : (error instanceof Error ? error.message : String(error))
+    const validationJson = buildValidationPayload(
+      isParseError
+        ? buildParseFailureValidation(parseMeta, message)
+        : (validationResult || {
+          ok: false,
+          passed: false,
+          errors: [message],
+          warnings: [],
+          checks: {},
+          metrics: {},
+          missingToolFields: sourceData ? validateSourceData(sourceData).missingToolFields || [] : [],
+        }),
+      {
+        promptVersion: promptVersion?.promptVersion || null,
+        promptVersionId: promptVersion?.id || null,
+        retryCount: apiRetryCount + expandRetryCount,
+        apiRetryCount,
+        expandRetryCount,
+        provider,
+        usage,
+        contentType: sourceData?.contentType || task.contentType?.toUpperCase?.() || task.contentType,
+        generatorName: sourceData?.task === 'generate_compare'
+          ? 'compare-generator'
+          : sourceData?.task === 'generate_guide' ? 'guide-generator' : 'unsupported-generator',
+        selectedToolStrategy: sourceData?.selectedToolStrategy || null,
+        toolCount: sourceData?.tools?.length || 0,
+        sourceCount: sourceData?.sources?.length || 0,
+        normalizedSources: validationResult?.normalizedSources || sourceData?.sources || [],
+        rawOutputLength: rawOutput?.length || 0,
+        ...(isParseError
+          ? {
+            parseErrorPosition: parseMeta?.position ?? null,
+            parseErrorSnippet: parseMeta?.snippet ?? null,
+            parseErrorLine: parseMeta?.line ?? null,
+            parseErrorColumn: parseMeta?.column ?? null,
+            parseRepaired: Boolean(parseMeta?.repaired),
+            parseStrategy: parseMeta?.strategy ?? null,
+          }
+          : {}),
+      },
+    )
 
     await saveContentGenerationTaskGenerationResult(taskId, {
       status: 'failed',

@@ -534,13 +534,19 @@ export function validateGeneratedContentPage(page, sourceData = null) {
     checks.recommendedToolsCount = check(recommendedHandles.size === limits.minRecommendedTools, recommendedHandles.size, `= ${limits.minRecommendedTools}`)
     checks.toolCalloutCount = check(toolCallouts.length === limits.minRecommendedTools, toolCallouts.length, `= ${limits.minRecommendedTools}`)
     checks.minRecommendedToolWordCount = check(
-      toolNoteWordCounts.length >= limits.minRecommendedTools && toolNoteWordCounts.every(row => (
-        row.words >= limits.minToolNoteWords && (!limits.maxToolNoteWords || row.words <= limits.maxToolNoteWords)
-      )),
+      toolNoteWordCounts.length >= limits.minRecommendedTools && toolNoteWordCounts.every(row => {
+        const minWords = limits.minToolNoteWordsPass ?? limits.minToolNoteWords
+        const maxWords = limits.maxToolNoteWordsPass ?? limits.maxToolNoteWords
+        return row.words >= minWords && (!maxWords || row.words <= maxWords)
+      }),
       toolNoteWordCounts,
-      limits.maxToolNoteWords
-        ? `at least ${limits.minRecommendedTools} notes; each ${limits.minToolNoteWords}-${limits.maxToolNoteWords} words`
-        : `at least ${limits.minRecommendedTools} notes; each >= ${limits.minToolNoteWords} words`,
+      (() => {
+        const minWords = limits.minToolNoteWordsPass ?? limits.minToolNoteWords
+        const maxWords = limits.maxToolNoteWordsPass ?? limits.maxToolNoteWords
+        return maxWords
+          ? `at least ${limits.minRecommendedTools} notes; each ${minWords}-${maxWords} words`
+          : `at least ${limits.minRecommendedTools} notes; each >= ${minWords} words`
+      })(),
     )
     checks.criteriaCount = check(extractGuideCriteria(blocks).length >= limits.minCriteria, extractGuideCriteria(blocks).length, `>= ${limits.minCriteria}`)
     checks.sourceCount = check(

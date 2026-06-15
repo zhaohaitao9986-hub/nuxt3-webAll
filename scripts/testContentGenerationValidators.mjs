@@ -303,7 +303,7 @@ assert.equal(riskyValidation.ok, false)
 assert.match(riskyValidation.errors.join('\n'), /High-risk expression/)
 
 const buyerLimits = structuredClone(guide)
-buyerLimits.bodyJson.blocks.find(block => block.type === 'tool_callout').verdict = exactWords(131)
+buyerLimits.bodyJson.blocks.find(block => block.type === 'tool_callout').verdict = exactWords(141)
 buyerLimits.bodyJson.blocks.find(block => block.type === 'section').html = `<p>${exactWords(171)}</p>`
 buyerLimits.bodyJson.blocks.find(block => block.type === 'faq').items[0].answer = exactWords(86)
 const buyerLimitsValidation = validateGeneratedContentPage(buyerLimits, guideSource)
@@ -311,6 +311,20 @@ assert.equal(buyerLimitsValidation.ok, false)
 assert.equal(buyerLimitsValidation.checks.minRecommendedToolWordCount.passed, false)
 assert.equal(buyerLimitsValidation.checks.minSectionWordCount.passed, false)
 assert.equal(buyerLimitsValidation.checks.minFaqAnswerWordCount.passed, false)
+
+const buyerToolCalloutPassRange = structuredClone(guide)
+for (const block of buyerToolCalloutPassRange.bodyJson.blocks.filter(row => row.type === 'tool_callout')) {
+  block.verdict = exactWords(104)
+}
+const buyerToolCalloutPassRangeValidation = validateGeneratedContentPage(buyerToolCalloutPassRange, guideSource)
+assert.equal(buyerToolCalloutPassRangeValidation.checks.minRecommendedToolWordCount.passed, true)
+
+const buyerToolCalloutMixedPassRange = structuredClone(guide)
+const buyerToolCallouts = buyerToolCalloutMixedPassRange.bodyJson.blocks.filter(row => row.type === 'tool_callout')
+buyerToolCallouts[0].verdict = exactWords(104)
+buyerToolCallouts[1].verdict = exactWords(117)
+const buyerToolCalloutMixedPassRangeValidation = validateGeneratedContentPage(buyerToolCalloutMixedPassRange, guideSource)
+assert.equal(buyerToolCalloutMixedPassRangeValidation.checks.minRecommendedToolWordCount.passed, true)
 
 const absoluteClaims = structuredClone(guide)
 absoluteClaims.bodyJson.blocks[0].items.push('This is the best ever, fully autonomous choice with no editing needed.')

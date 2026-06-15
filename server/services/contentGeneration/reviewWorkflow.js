@@ -4,8 +4,11 @@ import {
   getContentGenerationTask,
   markContentGenerationTaskPublished,
   rejectContentGenerationTask,
+  updateContentGenerationTask,
 } from './taskStore'
 import { upsertPublishedContentFromTask } from './publishStore'
+import { buildValidationPayload } from './generator.js'
+import { validateGeneratedContentPage } from './validators.js'
 
 function nonEmpty(value) {
   return typeof value === 'string' && value.trim().length > 0
@@ -60,6 +63,126 @@ export function validateBeforePublish(task) {
       status: 'PUBLISHED',
     },
   }
+}
+
+function getTaskContentJson(task) {
+  return task.finalContent
+    || task.final_content
+    || task.contentJson
+    || task.content_json
+    || task.generatedContent
+    || task.generated_content
+    || null
+}
+
+function getTaskSourceData(task) {
+  return task.sourceDataJson || task.source_data_json || null
+}
+
+function getTaskValidation(task) {
+  const validation = task.validationJson || task.validation_json
+  return validation && typeof validation === 'object' ? validation : {}
+}
+
+function productionScoreFromValidation(validation) {
+  const raw = validation.checks?.productionScore?.actual ?? validation.score ?? 0
+  const score = Number(raw)
+  return Number.isFinite(score) ? score : 0
+}
+
+export function canManualApproveValidation(validation) {
+  const score = productionScoreFromValidation(validation)
+  const failedChecks = Array.isArray(validation.failedChecks) ? validation.failedChecks : []
+  return score >= 90
+    && failedChecks.length > 0
+    && failedChecks.every(name => name === 'toolGrounding')
+}
+
+export async function revalidateContentGenerationTask(taskId, auth) {
+  const task = await getContentGenerationTask(taskId)
+  if (!task) {
+    throw createError({ statusCode: 404, statusMessage: '任务不存在' })
+  }
+
+  const contentJson = getTaskContentJson(task)
+  if (!contentJson || typeof contentJson !== 'object') {
+    throw createError({ statusCode: 400, statusMessage: '任务缺少 contentJson，无法重新校验' })
+  }
+
+  const sourceData = getTaskSourceData(task)
+  if (!sourceData) {
+    throw createError({ statusCode: 400, statusMessage: '任务缺少 sourceDataJson，无法重新校验' })
+  }
+
+  const existingValidation = getTaskValidation(task)
+  const validationResult = validateGeneratedContentPage(contentJson, sourceData)
+  const validationJson = buildValidationPayload(validationResult, {
+    promptVersion: existingValidation.promptVersion,
+    promptVersionId: existingValidation.promptVersionId ?? task.promptVersionId,
+    retryCount: existingValidation.retryCount ?? 0,
+    apiRetryCount: existingValidation.apiRetryCount ?? 0,
+    expandRetryCount: existingValidation.expandRetryCount ?? 0,
+    provider: existingValidation.provider,
+    usage: existingValidation.usage,
+    contentType: String(task.contentType || existingValidation.contentType || '').toUpperCase(),
+    generatorName: existingValidation.generatorName,
+    selectedToolStrategy: validationResult.selectedToolStrategy
+      || existingValidation.selectedToolStrategy
+      || sourceData.selectedToolStrategy,
+    toolCount: sourceData.tools?.length || existingValidation.toolCount || 0,
+    sourceCount: sourceData.sources?.length || existingValidation.sourceCount || 0,
+    normalizedSources: validationResult.normalizedSources
+      || existingValidation.normalizedSources
+      || sourceData.sources
+      || [],
+    typedWriteStatus: existingValidation.typedWriteStatus || 'not-written-review-stage',
+    rawOutputLength: existingValidation.rawOutputLength ?? task.rawOutput?.length ?? null,
+    jsonParseRepaired: existingValidation.jsonParseRepaired ?? null,
+    jsonParseStrategy: existingValidation.jsonParseStrategy ?? null,
+  })
+  validationJson.revalidatedAt = new Date().toISOString()
+
+  const errorMessage = validationResult.ok
+    ? ''
+    : `内容校验未通过：${(validationResult.errors || []).join('；') || 'unknown validation error'}`
+
+  await updateContentGenerationTask(taskId, {
+    validationJson,
+    errorMessage,
+  }, auth)
+
+  return {
+    passed: Boolean(validationResult.passed),
+    score: validationResult.score || 0,
+    failedChecks: validationResult.failedChecks || [],
+    warnings: validationResult.warnings || [],
+  }
+}
+
+export async function manualApproveTaskForReview(taskId, auth) {
+  const task = await getContentGenerationTask(taskId)
+  if (!task) {
+    throw createError({ statusCode: 404, statusMessage: '任务不存在' })
+  }
+  if (task.status !== 'review') {
+    throw createError({ statusCode: 400, statusMessage: '只有待审核内容可以标记通过' })
+  }
+
+  const validation = getTaskValidation(task)
+  if (!Object.keys(validation).length) {
+    throw createError({ statusCode: 400, statusMessage: '缺少 validationJson，请先重新校验' })
+  }
+
+  const score = productionScoreFromValidation(validation)
+  const failedChecks = Array.isArray(validation.failedChecks) ? validation.failedChecks : []
+  if (score < 90) {
+    throw createError({ statusCode: 400, statusMessage: `productionScore 需 >= 90，当前为 ${score}` })
+  }
+  if (!failedChecks.length || !failedChecks.every(name => name === 'toolGrounding')) {
+    throw createError({ statusCode: 400, statusMessage: '仅当 failedChecks 全部为 toolGrounding 时可手动标记通过' })
+  }
+
+  return approveContentGenerationTask(taskId, auth)
 }
 
 export async function approveTaskForReview(taskId, auth) {

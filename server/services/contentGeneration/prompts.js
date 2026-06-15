@@ -13,12 +13,23 @@ import {
   GUIDE_RESPONSE_SHAPE,
 } from './responseSchemas.js'
 
+export const JSON_OUTPUT_RULES = [
+  'Return only valid JSON. Do not use markdown fences such as ```json.',
+  'All object keys must be double-quoted. Do not use single-quoted keys.',
+  'Do not include trailing commas after the last item in objects or arrays.',
+  'Escape double quotes and control characters inside JSON string values.',
+  'Do not include explanations, comments, or text outside the JSON object.',
+  'The first non-whitespace character must be { and the last must be }.',
+  'Ensure the JSON object is complete and closed before finishing the response.',
+]
+
 export const editorialSystemPrompt = [
   'You are the production editorial content generation engine for AISeekTools.',
   'You create production-ready SEO drafts for Nuxt and Prisma-backed content pages.',
   'A REVIEW status means the draft awaits human approval; it does not permit thin, placeholder, test, or outline content.',
   'Be factual, conservative, source-grounded, specific, and useful to buyers making a decision.',
   'Return exactly one valid JSON object and no surrounding text.',
+  ...JSON_OUTPUT_RULES,
   'If source data is insufficient for a claim, omit or clearly qualify the claim.',
   `Never use unsupported absolute phrases: ${FORBIDDEN_CLAIM_LABELS.join(', ')}.`,
   QUALITATIVE_PRICING_POLICY,
@@ -239,6 +250,9 @@ export function buildGuideUserPrompt(sourceData) {
     'Validated AI input contract:',
     JSON.stringify(source, null, 2),
     '',
+    'JSON output contract (strict):',
+    JSON.stringify(JSON_OUTPUT_RULES, null, 2),
+    '',
     'Return strict JSON only. The first character must be { and the last character must be }.',
   ].join('\n')
 }
@@ -292,6 +306,9 @@ export function buildCompareUserPrompt(sourceData) {
     '',
     'Validated AI input contract:',
     JSON.stringify(source, null, 2),
+    '',
+    'JSON output contract (strict):',
+    JSON.stringify(JSON_OUTPUT_RULES, null, 2),
     '',
     'Return strict JSON only. The first character must be { and the last character must be }.',
   ].join('\n')

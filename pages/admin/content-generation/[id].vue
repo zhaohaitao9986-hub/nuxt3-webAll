@@ -39,6 +39,8 @@ const briefSummary = ref(null)
 const generationLoading = ref(false)
 const reviewLoading = ref(false)
 const rejectSaving = ref(false)
+const revalidateLoading = ref(false)
+const manualApproveLoading = ref(false)
 const generationPhase = ref('')
 
 const categoryOptions = ref([])
@@ -72,6 +74,31 @@ const detailRules = {
 
 const phaseLabel = computed(() => CONTENT_GENERATION_PHASE_LABELS[generationPhase.value] || '')
 const briefValidation = computed(() => validateContentGenerationBrief(detailForm))
+
+const parsedValidationJson = computed(() => {
+  try {
+    return JSON.parse(detailForm.validationJsonText || '{}')
+  }
+  catch {
+    return null
+  }
+})
+
+const canManualApprove = computed(() => {
+  if (detailForm.status !== 'review') {
+    return false
+  }
+  const validation = parsedValidationJson.value
+  if (!validation) {
+    return false
+  }
+  const score = Number(validation.checks?.productionScore?.actual ?? validation.score ?? 0)
+  const failedChecks = Array.isArray(validation.failedChecks) ? validation.failedChecks : []
+  return Number.isFinite(score)
+    && score >= 90
+    && failedChecks.length > 0
+    && failedChecks.every(name => name === 'toolGrounding')
+})
 
 function statusLabel(status) {
   return contentGenerationStatusLabel(status, statusMap.value)
@@ -308,6 +335,74 @@ async function approveTask() {
   }
 }
 
+async function revalidateTask() {
+  if (!taskId.value || revalidateLoading.value) {
+    return
+  }
+  revalidateLoading.value = true
+  try {
+    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${taskId.value}/revalidate`)
+    const { passed, score, failedChecks, warnings } = res.data || {}
+    await loadDetail()
+    const failedText = Array.isArray(failedChecks) && failedChecks.length
+      ? `，未通过项：${failedChecks.join('、')}`
+      : ''
+    const warningCount = Array.isArray(warnings) ? warnings.length : 0
+    const warningText = warningCount ? `，警告 ${warningCount} 条` : ''
+    if (passed) {
+      ElMessage.success(`重新校验通过，score=${score}${warningText}`)
+    }
+    else {
+      ElMessage.warning(`重新校验未通过，score=${score}${failedText}${warningText}`)
+    }
+  }
+  catch (e) {
+    if (e?.response?.status === 401) {
+      return
+    }
+    ElMessage.error(errorMessage(e, '重新校验失败'))
+  }
+  finally {
+    revalidateLoading.value = false
+  }
+}
+
+async function manualApproveTask() {
+  if (!taskId.value || manualApproveLoading.value) {
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      '该任务仅因 toolGrounding 未通过校验，确认手动标记为审核通过吗？',
+      '标记通过确认',
+      {
+        type: 'warning',
+        confirmButtonText: '标记通过',
+        cancelButtonText: '取消',
+      },
+    )
+  }
+  catch {
+    return
+  }
+
+  manualApproveLoading.value = true
+  try {
+    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${taskId.value}/manual-approve`)
+    fillContentGenerationDetailForm(detailForm, res.data)
+    ElMessage.success('已手动标记通过')
+  }
+  catch (e) {
+    if (e?.response?.status === 401) {
+      return
+    }
+    ElMessage.error(errorMessage(e, '标记通过失败'))
+  }
+  finally {
+    manualApproveLoading.value = false
+  }
+}
+
 function openReject() {
   rejectForm.reason = detailForm.rejectReason || ''
   rejectVisible.value = true
@@ -441,6 +536,23 @@ watch(() => detailForm.contentType, (contentType, previousType) => {
           @click="approveTask"
         >
           审核通过
+        </el-button>
+        <el-button
+          v-if="canManualApprove"
+          type="primary"
+          plain
+          :loading="manualApproveLoading"
+          :disabled="generationLoading || revalidateLoading"
+          @click="manualApproveTask"
+        >
+          标记通过
+        </el-button>
+        <el-button
+          :loading="revalidateLoading"
+          :disabled="generationLoading || !detailForm.contentJsonText.trim()"
+          @click="revalidateTask"
+        >
+          重新校验
         </el-button>
         <el-button
           v-if="detailForm.status === 'review'"
