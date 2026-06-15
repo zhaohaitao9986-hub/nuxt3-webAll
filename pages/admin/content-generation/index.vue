@@ -33,7 +33,32 @@ const loading = ref(false)
 const statusLoading = reactive({})
 const selectedRows = ref([])
 const batchLoading = ref(false)
+const batchDeleteLoading = ref(false)
+const deleteLoading = reactive({})
+const batchAbortController = ref(null)
 const categoryOptions = ref([])
+const batchCreateVisible = ref(false)
+const batchCreateLoading = ref(false)
+const batchCreateForm = reactive({
+  taskType: 'guide',
+  input: '',
+  limitCount: 5,
+  generationMode: 'production-seo-draft',
+})
+const batchCreateResults = ref([])
+const batchGenerateResults = ref([])
+const batchProgress = reactive({
+  total: 0,
+  running: 0,
+  succeeded: 0,
+  failed: 0,
+  skipped: 0,
+})
+const jsonDialog = reactive({
+  visible: false,
+  title: '',
+  content: '',
+})
 
 const createVisible = ref(false)
 const createSaving = ref(false)
@@ -64,7 +89,7 @@ function statusType(status) {
 
 function formatDt(iso) {
   if (!iso) {
-    return '—'
+    return '-'
   }
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString('zh-CN')
@@ -99,7 +124,7 @@ async function loadList() {
     if (e?.response?.status === 401) {
       return
     }
-    ElMessage.error(errorMessage(e, '加载失败'))
+    ElMessage.error(errorMessage(e, 'Load failed'))
     list.value = []
     total.value = 0
   }
@@ -147,48 +172,219 @@ function onSelectionChange(rows) {
   selectedRows.value = rows
 }
 
+function hasBrief(row) {
+  return !!(row?.promptJson?.brief && Object.keys(row.promptJson.brief).length)
+}
+
+function canBatchGenerate(row) {
+  return ['draft', 'pending', 'review_queue', 'failed'].includes(row?.status) && hasBrief(row)
+}
+
 function openDetail(row) {
   router.push(`/admin/content-generation/${row.id}`)
 }
 
-async function batchGenerateTasks() {
-  const ids = selectedRows.value.map((row) => row.id).filter(Boolean)
-  if (!ids.length) {
-    ElMessage.warning('请选择需要生成的任务')
+function canDelete(row) {
+  return row?.status !== 'generating'
+}
+
+async function deleteRow(row) {
+  if (!canDelete(row)) {
+    ElMessage.warning('生成中的任务不能删除')
     return
   }
-
   try {
-    await ElMessageBox.confirm(`将批量生成 ${ids.length} 个任务，生成结果只会进入待审核状态。确定继续吗？`, '批量生成确认', {
-      type: 'warning',
-      confirmButtonText: '批量生成',
-      cancelButtonText: '取消',
-    })
+    await ElMessageBox.confirm(
+      `确定删除任务 #${row.id}「${row.title || row.slug || ''}」吗？将同时删除任务内生成的 JSON 内容，若已发布还会删除前台对应页面。`,
+      '删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
   }
   catch {
     return
   }
 
-  batchLoading.value = true
+  deleteLoading[row.id] = true
   try {
-    const res = await adminAxios.post('/api/admin/content-generation/tasks/batch-generate', {
-      ids,
-      concurrency: 2,
-    })
-    const data = res.data || {}
-    ElMessage.success(`批量生成完成：成功 ${data.success || 0}，失败 ${data.failed || 0}`)
+    await adminAxios.delete(`/api/admin/content-generation/tasks/${row.id}`)
+    ElMessage.success('任务已删除')
+    selectedRows.value = selectedRows.value.filter(item => item.id !== row.id)
     await loadList()
   }
   catch (e) {
-    if (e?.response?.status === 401) {
-      return
+    if (e?.response?.status === 401) return
+    ElMessage.error(errorMessage(e, '删除失败'))
+  }
+  finally {
+    deleteLoading[row.id] = false
+  }
+}
+
+async function batchDeleteTasks() {
+  const rows = selectedRows.value.filter(canDelete)
+  if (!rows.length) {
+    ElMessage.warning('请选择要删除的任务（生成中的任务不可删除）')
+    return
+  }
+  const skipped = selectedRows.value.length - rows.length
+  try {
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${rows.length} 个任务吗？将同时删除各任务生成的 JSON 内容，已发布任务还会删除前台对应页面。${skipped ? `（已跳过 ${skipped} 个生成中的任务）` : ''}`,
+      '批量删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  }
+  catch {
+    return
+  }
+
+  batchDeleteLoading.value = true
+  try {
+    const res = await adminAxios.post('/api/admin/content-generation/tasks/batch-delete', {
+      ids: rows.map(row => row.id),
+    })
+    const data = res.data || {}
+    const pageCount = (data.deletedContentPageIds || []).length
+    ElMessage.success(`已删除 ${data.deleted || rows.length} 个任务${pageCount ? `，含 ${pageCount} 个已发布页面` : ''}`)
+    selectedRows.value = []
+    await loadList()
+  }
+  catch (e) {
+    if (e?.response?.status === 401) return
+    ElMessage.error(errorMessage(e, '批量删除失败'))
+  }
+  finally {
+    batchDeleteLoading.value = false
+  }
+}
+
+async function batchGenerateTasksV2() {
+  const ids = selectedRows.value.filter(canBatchGenerate).map(row => row.id).filter(Boolean)
+  if (!ids.length) {
+    ElMessage.warning('Please select draft, pending, or failed tasks with prepared briefs.')
+    return
+  }
+
+  batchLoading.value = true
+  batchGenerateResults.value = []
+  Object.assign(batchProgress, { total: ids.length, running: ids.length, succeeded: 0, failed: 0, skipped: 0 })
+  batchAbortController.value = new AbortController()
+  try {
+    const res = await adminAxios.post('/api/admin/content-generation/tasks/batch-generate', {
+      ids,
+      concurrency: 1,
+    }, { signal: batchAbortController.value.signal })
+    const data = res.data || {}
+    batchGenerateResults.value = data.results || []
+    Object.assign(batchProgress, {
+      total: data.total || ids.length,
+      running: data.running || 0,
+      succeeded: data.succeeded || data.success || 0,
+      failed: data.failed || 0,
+      skipped: data.skipped || 0,
+    })
+    ElMessage.success(`Batch generation finished: ${batchProgress.succeeded} succeeded, ${batchProgress.failed} failed, ${batchProgress.skipped} skipped.`)
+    await loadList()
+  }
+  catch (e) {
+    if (e?.response?.status === 401) return
+    if (e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED') {
+      ElMessage.warning('Batch generation request stopped.')
     }
-    ElMessage.error(errorMessage(e, '批量生成失败'))
+    else {
+      ElMessage.error(errorMessage(e, 'Batch generation failed'))
+    }
+    await loadList()
+  }
+  finally {
+    batchLoading.value = false
+    batchProgress.running = 0
+    batchAbortController.value = null
+  }
+}
+
+function stopBatchGenerate() {
+  batchAbortController.value?.abort?.()
+}
+
+function openBatchCreate() {
+  batchCreateForm.taskType = 'guide'
+  batchCreateForm.input = ''
+  batchCreateForm.limitCount = 5
+  batchCreateForm.generationMode = 'production-seo-draft'
+  batchCreateResults.value = []
+  batchCreateVisible.value = true
+}
+
+async function submitBatchCreate() {
+  if (!batchCreateForm.input.trim()) {
+    ElMessage.warning('Please enter batch input.')
+    return
+  }
+  batchCreateLoading.value = true
+  try {
+    const res = await adminAxios.post('/api/admin/content-generation/tasks/batch-create-brief', {
+      taskType: batchCreateForm.taskType,
+      input: batchCreateForm.input,
+      limitCount: batchCreateForm.limitCount,
+      generationMode: batchCreateForm.generationMode,
+    })
+    const data = res.data || {}
+    batchCreateResults.value = [
+      ...(data.createdItems || []),
+      ...(data.skippedItems || []),
+      ...(data.failedItems || []),
+    ]
+    ElMessage.success(`Created ${data.summary?.created || 0}, skipped ${data.summary?.skipped || 0}, failed ${data.summary?.failed || 0}.`)
+    await loadList()
+  }
+  catch (e) {
+    if (e?.response?.status === 401) return
+    ElMessage.error(errorMessage(e, 'Batch create failed'))
+  }
+  finally {
+    batchCreateLoading.value = false
+  }
+}
+
+async function prepareBriefForRow(row) {
+  try {
+    await adminAxios.post(`/api/admin/content-generation/tasks/${row.id}/prepare-brief`, {
+      contentType: row.contentType,
+      categoryId: row.categoryId || null,
+      primaryToolId: row.toolId || row.promptJson?.brief?.primaryToolId || null,
+      secondaryToolId: row.promptJson?.brief?.secondaryToolId || null,
+    })
+    ElMessage.success('Brief prepared.')
+    await loadList()
+  }
+  catch (e) {
+    if (e?.response?.status === 401) return
+    ElMessage.error(errorMessage(e, 'Prepare brief failed'))
+  }
+}
+
+async function generateRow(row) {
+  batchLoading.value = true
+  try {
+    await adminAxios.post(`/api/admin/content-generation/tasks/${row.id}/generate`)
+    ElMessage.success('Content generated.')
+    await loadList()
+  }
+  catch (e) {
+    if (e?.response?.status === 401) return
+    ElMessage.error(errorMessage(e, 'Generate content failed'))
     await loadList()
   }
   finally {
     batchLoading.value = false
   }
+}
+
+function showJson(title, value) {
+  jsonDialog.title = title
+  jsonDialog.content = JSON.stringify(value || {}, null, 2)
+  jsonDialog.visible = true
 }
 
 function openCreate() {
@@ -207,11 +403,10 @@ function openCreate() {
 
 function validatePrepareSeed() {
   const type = String(createForm.contentType).toUpperCase()
-  if (['BUYER_GUIDE', 'CATEGORY_GUIDE', 'COMPARISON', 'ALTERNATIVE'].includes(type) && !createForm.categoryId) return '请选择二级分类'
-  if (['TUTORIAL', 'COMPARISON', 'ALTERNATIVE'].includes(type) && !createForm.primaryToolId) return '请选择主工具'
+  if (['BUYER_GUIDE', 'CATEGORY_GUIDE', 'COMPARISON', 'ALTERNATIVE'].includes(type) && !createForm.categoryId) return 'Please select a category.'
+  if (['TUTORIAL', 'COMPARISON', 'ALTERNATIVE'].includes(type) && !createForm.primaryToolId) return 'Please select a primary tool.'
   return ''
 }
-
 async function submitCreate(prepareBrief = false) {
   try {
     await createFormRef.value?.validate?.()
@@ -245,42 +440,37 @@ async function submitCreate(prepareBrief = false) {
         primaryToolId: createForm.primaryToolId || null,
         secondaryToolId: createForm.secondaryToolId || null,
       })
-      ElMessage.success('任务已创建，Brief 已自动生成')
+      ElMessage.success('Task created and brief prepared.')
       createVisible.value = false
       await loadList()
       router.push(`/admin/content-generation/${response.data.id}`)
       return
     }
-    ElMessage.success('已创建')
+    ElMessage.success('Task created.')
     createVisible.value = false
     await loadList()
   }
   catch (e) {
-    if (e?.response?.status === 401) {
-      return
-    }
-    ElMessage.error(errorMessage(e, '创建失败'))
+    if (e?.response?.status === 401) return
+    ElMessage.error(errorMessage(e, 'Create failed'))
   }
   finally {
     createSaving.value = false
     briefPreparing.value = false
   }
 }
-
 async function changeStatus(row, status) {
-  if (row.status === status) {
-    return
-  }
+  if (row.status === status) return
   if (status === 'published') {
-    ElMessage.warning('请在详情页使用发布按钮')
+    ElMessage.warning('Use the detail page to publish approved content.')
     return
   }
   if (status === 'approved') {
-    ElMessage.warning('请在详情页使用审核通过按钮')
+    ElMessage.warning('Use the detail page to approve review content.')
     return
   }
   if (status === 'rejected') {
-    ElMessage.warning('请在详情页使用驳回按钮')
+    ElMessage.warning('Use the detail page to reject content with a reason.')
     return
   }
 
@@ -289,19 +479,16 @@ async function changeStatus(row, status) {
     const res = await adminAxios.patch(`/api/admin/content-generation/tasks/${row.id}/status`, { status })
     row.status = res.data.status
     row.updatedAt = res.data.updatedAt
-    ElMessage.success('状态已更新')
+    ElMessage.success('Status updated.')
   }
   catch (e) {
-    if (e?.response?.status === 401) {
-      return
-    }
-    ElMessage.error(errorMessage(e, '状态更新失败'))
+    if (e?.response?.status === 401) return
+    ElMessage.error(errorMessage(e, 'Status update failed'))
   }
   finally {
     statusLoading[row.id] = false
   }
 }
-
 onMounted(() => {
   loadOptions()
   loadList()
@@ -355,13 +542,28 @@ watch(() => createForm.contentType, (contentType) => {
         <el-button type="primary" @click="openCreate">
           新建任务
         </el-button>
+        <el-button type="primary" plain @click="openBatchCreate">
+          批量创建
+        </el-button>
         <el-button
           type="success"
           :loading="batchLoading"
           :disabled="!selectedRows.length"
-          @click="batchGenerateTasks"
+          @click="batchGenerateTasksV2"
         >
           批量生成
+        </el-button>
+        <el-button v-if="batchLoading" type="danger" plain @click="stopBatchGenerate">
+          停止批量
+        </el-button>
+        <el-button
+          type="danger"
+          plain
+          :loading="batchDeleteLoading"
+          :disabled="!selectedRows.length || batchLoading"
+          @click="batchDeleteTasks"
+        >
+          批量删除
         </el-button>
       </div>
 
@@ -379,6 +581,14 @@ watch(() => createForm.contentType, (contentType) => {
         <el-table-column prop="title" label="任务标题" min-width="180" show-overflow-tooltip />
         <el-table-column prop="slug" label="Slug" min-width="160" show-overflow-tooltip />
         <el-table-column prop="contentType" label="内容类型" width="140" show-overflow-tooltip />
+        <el-table-column label="分类/对比" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.categorySlug || row.toolPair || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="score" label="评分" width="88" />
+        <el-table-column prop="wordCount" label="字数" width="92" />
+        <el-table-column prop="errorMessage" label="错误" min-width="180" show-overflow-tooltip />
         <el-table-column label="状态" width="110" align="center">
           <template #default="{ row }">
             <el-tag :type="statusType(row.status)" effect="light">
@@ -386,16 +596,40 @@ watch(() => createForm.contentType, (contentType) => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="更新时间" width="168">
+        <el-table-column label="生成时间" width="168">
           <template #default="{ row }">
-            {{ formatDt(row.updatedAt) }}
+            {{ formatDt(row.generatedAt || row.updatedAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right" align="center">
+        <el-table-column label="操作" width="480" fixed="right" align="center">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">
               详情
             </el-button>
+            <el-button link type="primary" @click="prepareBriefForRow(row)">
+              生成 Brief
+            </el-button>
+            <el-button link type="success" :disabled="!hasBrief(row)" @click="generateRow(row)">
+              {{ row.status === 'failed' ? '重试' : '生成内容' }}
+            </el-button>
+            <el-dropdown trigger="click">
+              <el-button link type="primary">
+                查看
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="showJson('Brief', row.promptJson?.brief)">
+                    查看 Brief
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="showJson('Validation', row.validationJson)">
+                    查看校验
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="showJson('Content', row.contentJson || row.generatedContent || row.finalContent)">
+                    查看内容
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
             <el-dropdown
               trigger="click"
               :disabled="!!statusLoading[row.id]"
@@ -417,6 +651,53 @@ watch(() => createForm.contentType, (contentType) => {
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
+            <el-button
+              link
+              type="danger"
+              :disabled="!canDelete(row)"
+              :loading="!!deleteLoading[row.id]"
+              @click="deleteRow(row)"
+            >
+              删除
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <el-alert
+        v-if="batchLoading || batchGenerateResults.length"
+        class="batch-progress"
+        type="info"
+        :closable="false"
+        show-icon
+      >
+        <template #title>
+          批量进度：共 {{ batchProgress.total }}，
+          进行中 {{ batchProgress.running }}，
+          成功 {{ batchProgress.succeeded }}，
+          失败 {{ batchProgress.failed }}，
+          跳过 {{ batchProgress.skipped }}
+        </template>
+      </el-alert>
+
+      <el-table
+        v-if="batchGenerateResults.length"
+        :data="batchGenerateResults"
+        border
+        size="small"
+        class="batch-result-table"
+      >
+        <el-table-column prop="taskId" label="taskId" width="90" />
+        <el-table-column prop="contentType" label="contentType" width="140" />
+        <el-table-column prop="title" label="title" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="slug" label="slug" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="score" label="score" width="80" />
+        <el-table-column prop="wordCount" label="wordCount" width="100" />
+        <el-table-column prop="status" label="status" width="100" />
+        <el-table-column prop="errorMessage" label="errorMessage" min-width="220" show-overflow-tooltip />
+        <el-table-column label="warnings" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ Array.isArray(row.warnings) ? row.warnings.length : 0 }}
           </template>
         </el-table-column>
       </el-table>
@@ -434,6 +715,67 @@ watch(() => createForm.contentType, (contentType) => {
         />
       </div>
     </el-card>
+
+    <el-dialog
+      v-model="batchCreateVisible"
+      title="批量创建任务"
+      width="760px"
+      destroy-on-close
+    >
+      <el-form label-width="140px">
+        <el-form-item label="taskType">
+          <el-radio-group v-model="batchCreateForm.taskType">
+            <el-radio-button label="guide">
+              Guide
+            </el-radio-button>
+            <el-radio-button label="compare">
+              Compare
+            </el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="Batch Input">
+          <el-input
+            v-model="batchCreateForm.input"
+            type="textarea"
+            :rows="8"
+            :placeholder="batchCreateForm.taskType === 'guide' ? 'ai-writing-assistants\nai-summarizer' : 'ChatGPT vs Claude\nGrammarly vs QuillBot'"
+          />
+        </el-form-item>
+        <el-form-item label="limitCount">
+          <el-input-number v-model="batchCreateForm.limitCount" :min="1" :max="30" />
+        </el-form-item>
+        <el-form-item label="generationMode">
+          <el-input v-model="batchCreateForm.generationMode" />
+        </el-form-item>
+      </el-form>
+
+      <el-table
+        v-if="batchCreateResults.length"
+        :data="batchCreateResults"
+        border
+        size="small"
+      >
+        <el-table-column prop="input" label="input" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="status" label="status" width="100" />
+        <el-table-column prop="taskId" label="taskId" width="90" />
+        <el-table-column prop="title" label="title" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="slug" label="slug" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="reason" label="reason" min-width="180" show-overflow-tooltip />
+      </el-table>
+
+      <template #footer>
+        <el-button @click="batchCreateVisible = false">
+          关闭
+        </el-button>
+        <el-button type="primary" :loading="batchCreateLoading" @click="submitBatchCreate">
+          创建并准备 Brief
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="jsonDialog.visible" :title="jsonDialog.title" width="760px">
+      <pre class="json-preview">{{ jsonDialog.content }}</pre>
+    </el-dialog>
 
     <el-dialog
       v-model="createVisible"
@@ -465,7 +807,7 @@ watch(() => createForm.contentType, (contentType) => {
             v-model="createForm.categoryId"
             clearable
             filterable
-            placeholder="可选，用于按分类读取工具"
+            placeholder="请选择分类"
             style="width: 100%"
           >
             <el-option
@@ -535,5 +877,22 @@ watch(() => createForm.contentType, (contentType) => {
   margin-top: 16px;
   display: flex;
   justify-content: flex-end;
+}
+
+.batch-progress,
+.batch-result-table {
+  margin-top: 12px;
+}
+
+.json-preview {
+  max-height: 560px;
+  overflow: auto;
+  padding: 12px;
+  margin: 0;
+  background: #111827;
+  color: #e5e7eb;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

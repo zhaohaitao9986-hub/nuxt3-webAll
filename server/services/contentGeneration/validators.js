@@ -32,6 +32,11 @@ const FEATURE_ASSERTION_PATTERNS = [
   /\bintegrates?\s+with\b/i,
   /\bplagiarism[- ]free\b/i,
 ]
+const PAGE_GOAL_CONTAMINATION_PATTERNS = [
+  { label: 'Best For:', pattern: /\bBest\s+For\s*:/i },
+  { label: 'Not Ideal For:', pattern: /\bNot\s+Ideal\s+For\s*:/i },
+  { label: 'Summary:', pattern: /\bSummary\s*:/i },
+]
 
 function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -151,28 +156,121 @@ function toolCategoryIds(tool) {
     .map(value => String(value))
 }
 
-function isObviouslyUnrelatedGuideTool(tool, category) {
-  const categoryHandle = String(category?.handle || '').toLowerCase()
-  const categoryName = String(category?.name || '').toLowerCase()
-  const toolText = [
+function toolCategoryText(tool) {
+  return (tool?.matchedCategories || tool?.toolCategories || [])
+    .map(category => [
+      category?.name,
+      category?.handle,
+      category?.level1Name,
+      category?.level1Handle,
+      category?.category?.name,
+      category?.category?.handle,
+    ].filter(Boolean).join(' '))
+    .filter(Boolean)
+    .join(' ')
+}
+
+function guideToolText(tool) {
+  return [
     tool?.handle,
     tool?.name,
     tool?.description,
     tool?.whatIsSummary,
+    tool?.summary,
+    toolCategoryText(tool),
+    ...(tool?.feature || []),
     ...(tool?.features || []),
     ...(tool?.tags || []),
     ...(tool?.useCases || []),
   ].filter(Boolean).join(' ').toLowerCase()
-  if (categoryHandle === 'ai-summarizer' && /\b(bitbucket|git repository|code hosting|version control|plagiarism|detector)\b/i.test(toolText)) return true
-  if (categoryHandle === 'ai-writing-assistants' && /\b(workspace|database|project management|notion)\b/i.test(toolText)) return true
-  const coreTokens = [...new Set(`${categoryHandle} ${categoryName}`
+}
+
+function hasOfficialSource(tool) {
+  return Boolean(
+    tool?.website
+    || tool?.sourceMap?.length
+    || tool?.sources?.some(source => /official/i.test(String(source?.sourceType || source?.type || '')))
+    || tool?.claims?.some(claim => claim.sourceId || claim.source)
+    || tool?.pricingPlans?.some(plan => plan.sourceId || plan.source),
+  )
+}
+
+function guideCategoryTokens(category) {
+  return [...new Set(`${category?.handle || ''} ${category?.name || ''}`
     .replace(/^ai[-\s]+/, '')
     .split(/[^a-z0-9]+/)
     .filter(token => token.length >= 4 && !['tools', 'tool', 'assistant', 'assistants', 'generator'].includes(token)))]
-  return coreTokens.length > 0
-    && !coreTokens.some(token => toolText.includes(token))
-    && toolCategoryIds(tool).length > 8
-    && ['WEAK', 'INVALID'].includes(tool?.relevanceLabel)
+}
+
+function manualGuideToolBlockReason(tool, category, toolText) {
+  const categoryHandle = String(category?.handle || '').toLowerCase()
+  const toolIdentity = `${tool?.handle || ''} ${tool?.name || ''}`.toLowerCase()
+  const nonCodeCategory = !/\bcode|developer|programming|repository|devops\b/i.test(categoryHandle)
+  const nonResumeCategory = !/\bresume|cv|career|job\b/i.test(categoryHandle)
+  const nonWebsiteCategory = !/\bwebsite|site|landing-page|web-builder\b/i.test(categoryHandle)
+  if (categoryHandle === 'ai-summarizer' && /\b(bitbucket|zerogpt)\b/i.test(toolIdentity)) return 'manual blacklist for ai-summarizer'
+  if (categoryHandle === 'ai-writing-assistants' && /\b(notion|deepl)\b/i.test(toolIdentity)) return 'manual blacklist for ai-writing-assistants'
+  if (nonCodeCategory && /\b(code hosting|version control|git repository|source code repository)\b/i.test(toolText)) {
+    return 'code hosting/version-control only tool in non-code category'
+  }
+  if (nonResumeCategory && /\b(resume-only|resume builder|cv builder|cover letter only)\b/i.test(toolText)) {
+    return 'resume-only tool in non-resume category'
+  }
+  if (nonWebsiteCategory && /\b(website-builder-only|website builder|landing page builder|site builder)\b/i.test(toolText)) {
+    return 'website-builder-only tool in non-website category'
+  }
+  return ''
+}
+
+function buildCategoryRelevanceIssue(tool, category, categoryRisk, reason, action) {
+  return {
+    toolId: tool?.id || null,
+    toolName: tool?.name || tool?.handle || String(tool?.id || 'unknown'),
+    categorySlug: category?.handle || '',
+    relevanceLabel: String(tool?.relevanceLabel || '').toUpperCase() || 'UNKNOWN',
+    categoryRisk,
+    reason,
+    action,
+  }
+}
+
+export function assessGuideToolCategoryRisk(tool, category) {
+  const expectedCategoryId = category?.id
+  const label = String(tool?.relevanceLabel || '').toUpperCase()
+  const categoryIds = toolCategoryIds(tool)
+  const boundToCurrentCategory = expectedCategoryId != null && categoryIds.includes(String(expectedCategoryId))
+  const toolText = guideToolText(tool)
+  const categoryTokens = guideCategoryTokens(category)
+  const positiveTokenHits = categoryTokens.filter(token => toolText.includes(token))
+  const categoryBindingCount = categoryIds.length
+  const sourceComplete = hasOfficialSource(tool)
+
+  if (!boundToCurrentCategory) {
+    return buildCategoryRelevanceIssue(tool, category, 'BLOCKED', 'selectedTool is not bound to the current category_level2.id', 'block')
+  }
+  if (label === 'INVALID') {
+    return buildCategoryRelevanceIssue(tool, category, 'BLOCKED', 'relevanceLabel is INVALID', 'block')
+  }
+  const manualBlockReason = manualGuideToolBlockReason(tool, category, toolText)
+  if (manualBlockReason) {
+    return buildCategoryRelevanceIssue(tool, category, 'BLOCKED', manualBlockReason, 'block')
+  }
+  if (label === 'WEAK') {
+    return buildCategoryRelevanceIssue(tool, category, 'HIGH', 'relevanceLabel is WEAK; keep for human review instead of blocking generation', 'review')
+  }
+  if (label === 'STRONG' && sourceComplete) {
+    return buildCategoryRelevanceIssue(tool, category, 'LOW', 'STRONG relevance, current category binding, and official/source context present', 'review')
+  }
+  if (label === 'MEDIUM') {
+    return buildCategoryRelevanceIssue(tool, category, 'MEDIUM', 'MEDIUM relevance; acceptable for generation but should remain visible in REVIEW', 'review')
+  }
+  if (categoryBindingCount > 8 && positiveTokenHits.length) {
+    return buildCategoryRelevanceIssue(tool, category, 'MEDIUM', 'many category bindings, but text contains current-category positive signals', 'review')
+  }
+  if (categoryBindingCount > 8 && !positiveTokenHits.length) {
+    return buildCategoryRelevanceIssue(tool, category, 'HIGH', 'many category bindings and weak visible category signals; review fit manually', 'review')
+  }
+  return buildCategoryRelevanceIssue(tool, category, sourceComplete ? 'LOW' : 'MEDIUM', sourceComplete ? 'current category binding with source context' : 'current category binding but limited source context', 'review')
 }
 
 function validateGuideSelectedTools(data, errors, warnings) {
@@ -187,20 +285,31 @@ function validateGuideSelectedTools(data, errors, warnings) {
   if (selectedTools.length > 10) errors.push('selectedTools count must be <= 10')
   const ids = selectedTools.map(tool => String(tool?.id || '')).filter(Boolean)
   if (new Set(ids).size !== ids.length) errors.push('selectedTools must not contain duplicate toolId')
-  const disallowed = []
   let mediumCount = 0
+  let weakCount = 0
+  const diagnostics = []
   selectedTools.forEach((tool) => {
     const label = String(tool?.relevanceLabel || '').toUpperCase()
     if (label === 'MEDIUM') mediumCount += 1
-    if (['WEAK', 'INVALID'].includes(label)) disallowed.push(`${tool?.name || tool?.handle || tool?.id}: ${label}`)
-    if (!toolCategoryIds(tool).includes(String(expectedCategoryId))) {
-      errors.push(`selectedTool ${tool?.name || tool?.handle || tool?.id} is not bound to current category_level2.id ${expectedCategoryId}`)
+    if (label === 'WEAK') weakCount += 1
+    const risk = assessGuideToolCategoryRisk(tool, data.category?.level2)
+    diagnostics.push(risk)
+    if (risk.categoryRisk === 'BLOCKED') {
+      errors.push(`categoryRelevanceBlocked: ${JSON.stringify(risk)}`)
     }
-    if (isObviouslyUnrelatedGuideTool(tool, data.category?.level2)) {
-      errors.push(`selectedTool ${tool?.name || tool?.handle || tool?.id} is obviously unrelated to ${data.category?.level2?.handle}`)
+    else if (risk.categoryRisk === 'HIGH') {
+      warnings.push(warning('categoryRelevanceReview', `${risk.toolName} needs category relevance review`, risk))
     }
   })
-  if (disallowed.length) errors.push(`selectedTools cannot include WEAK or INVALID tools: ${disallowed.join(', ')}`)
+  if (selectedTools.length && weakCount / selectedTools.length > 0.4) {
+    warnings.push(warning('guideWeakToolRatio', 'WEAK selectedTools exceed 40%; keep the draft in REVIEW and review tool fit', {
+      weakCount,
+      selectedToolsCount: selectedTools.length,
+      weakRatio: Number((weakCount / selectedTools.length).toFixed(2)),
+      categoryRisk: 'HIGH',
+      action: 'review',
+    }))
+  }
   if (selectedTools.length && mediumCount / selectedTools.length > 0.4) {
     warnings.push(warning('guideMediumToolRatio', 'MEDIUM selectedTools exceed 40%; keep the draft in REVIEW', {
       mediumCount,
@@ -208,6 +317,22 @@ function validateGuideSelectedTools(data, errors, warnings) {
       mediumRatio: Number((mediumCount / selectedTools.length).toFixed(2)),
     }))
   }
+  return diagnostics
+}
+
+function validateBuyerGuidePageGoal(data, warnings) {
+  if (data.contentType !== 'BUYER_GUIDE') return
+  const pageGoal = String(data?.aiInput?.pageGoal || data?.pageGoal || '').trim()
+  if (!pageGoal) return
+  const matches = PAGE_GOAL_CONTAMINATION_PATTERNS
+    .filter(row => row.pattern.test(pageGoal))
+    .map(row => row.label)
+  if (!matches.length) return
+  warnings.push(warning('buyerGuidePageGoalContamination', 'BUYER_GUIDE pageGoal appears to include audience/tool-summary text; regenerate or edit the brief pageGoal', {
+    pageGoal,
+    forbiddenFragments: matches,
+    action: 'review',
+  }))
 }
 
 export function validateGuideSourceData(data) {
@@ -226,10 +351,12 @@ export function validateGuideSourceData(data) {
   if (data.contentType === 'TUTORIAL' && !data.primaryTool) {
     errors.push('TUTORIAL requires a primaryTool')
   }
-  validateGuideSelectedTools(data, errors, warnings)
+  const categoryRelevanceDiagnostics = validateGuideSelectedTools(data, errors, warnings) || []
+  validateBuyerGuidePageGoal(data, warnings)
   const inputContract = validateInputContract(data, errors, warnings)
   return result(errors, warnings, {
     missingToolFields: collectMissingToolFields(data.tools || []),
+    categoryRelevanceDiagnostics,
     inputContract,
     ...inputContract,
   })

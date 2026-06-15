@@ -3,6 +3,7 @@ import { getContentGenerationTask, updateContentGenerationTask } from '~/server/
 import { prepareDeterministicBrief } from '~/server/services/contentGeneration/briefBuilder'
 import { buildContentSourceData } from '~/server/services/contentGeneration/sourceBuilder'
 import { validateSourceData } from '~/server/services/contentGeneration/validators'
+import { uniqueContentGenerationSlug } from '~/server/services/contentGeneration/slugUtils'
 
 export default defineEventHandler(async (event) => {
   const auth = assertAnyAdmin(event)
@@ -26,12 +27,26 @@ export default defineEventHandler(async (event) => {
       },
     }
     const brief = await prepareDeterministicBrief(seedTask)
+    const preparedSlug = await uniqueContentGenerationSlug(brief.slug || brief.targetKeyword || brief.title || task.slug, {
+      contentType: seedTask.contentType,
+      excludeTaskId: id,
+    })
+    const preparedTitle = String(brief.title || task.title || '').trim()
     const updated = await updateContentGenerationTask(id, {
+      title: preparedTitle,
+      slug: preparedSlug,
       contentType: seedTask.contentType,
       categoryId: seedTask.categoryId || null,
       toolId: brief.primaryToolId || task.toolId || null,
       promptJson: { ...(task.promptJson || {}), brief, briefPreparedAt: new Date().toISOString(), briefPreparedBy: 'deterministic-rules' },
+      sourceDataJson: null,
+      validationJson: null,
       errorMessage: '',
+      rejectReason: '',
+      contentJson: null,
+      generatedContent: null,
+      finalContent: null,
+      rawOutput: '',
     }, auth)
     const sourceData = await buildContentSourceData({ ...updated, contentType: updated.contentType.toUpperCase() })
     const validation = validateSourceData(sourceData)

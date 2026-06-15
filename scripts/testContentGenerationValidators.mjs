@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { validateGeneratedContentPage } from '../server/services/contentGeneration/validators.js'
+import { validateGeneratedContentPage, validateSourceData } from '../server/services/contentGeneration/validators.js'
 import { PRODUCTION_LIMITS } from '../server/services/contentGeneration/editorialRules.js'
 import { enforceInputContract } from '../server/services/contentGeneration/inputContracts.js'
 import { applyPromptTemplate } from '../server/services/contentGeneration/prompts.js'
@@ -99,6 +99,74 @@ const guide = {
   categoryContentPage: { level1Id: 10, level2Id: 20 },
   tutorialPage: null,
   sources,
+}
+
+function guideSourceTool(id, name, summary, category = { id: 52, handle: 'ai-writing-assistants', name: 'AI Writing Assistants' }, options = {}) {
+  return {
+    id,
+    name,
+    handle: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+    summary,
+    description: summary,
+    whatIsSummary: summary,
+    website: `https://tool-${id}.example.com`,
+    relevanceLabel: options.relevanceLabel || 'STRONG',
+    matchedCategories: options.matchedCategories || [category],
+    pricing: ['Pricing requires verification on the official website.'],
+    pricingPlans: [{ planName: 'Professional', billingInterval: 'MONTHLY', features: ['Team workflow'] }],
+    claims: [{ claimType: 'FEATURE', claimText: summary }],
+    features: [summary],
+    pros: ['Useful workflow fit'],
+    cons: ['Requires verification'],
+    useCases: [summary],
+  }
+}
+
+function sourceDataForToolCheck(category, firstTool) {
+  const filler = [
+    guideSourceTool(902, 'Grammarly', 'AI grammar checker and writing editor', category),
+    guideSourceTool(903, 'QuillBot', 'Paraphraser and rewriting tool', category),
+    guideSourceTool(904, 'Wordtune', 'AI writing assistant', category),
+    guideSourceTool(905, 'Smodin', 'AI writer for writing workflows', category),
+  ]
+  const selectedTools = [firstTool, ...filler]
+  return {
+    task: 'generate_guide',
+    contentType: 'BUYER_GUIDE',
+    slug: category.handle,
+    canonicalPath: `/guides/${category.handle}`,
+    category: { level1: { id: 1, handle: 'writing-editing', name: 'Writing & Editing' }, level2: category },
+    tools: selectedTools,
+    topTools: selectedTools,
+    selectedTools,
+    sources: selectedTools.map((tool, index) => ({
+      url: tool.website,
+      domain: new URL(tool.website).hostname,
+      title: tool.name,
+      sourceType: 'OFFICIAL_SITE',
+      sort: index + 1,
+    })),
+    aiInput: {
+      pageType: 'GUIDE',
+      contentType: 'BUYER_GUIDE',
+      targetKeyword: category.handle === 'ai-summarizer' ? 'Best AI Summarizer Tools' : 'Best AI Writing Assistants',
+      pageGoal: 'Help readers compare relevant tools.',
+      searchIntent: 'buyer_guide',
+      audience: 'Software buyers',
+      selectedTools: selectedTools.map(tool => ({
+        id: tool.id,
+        handle: tool.handle,
+        name: tool.name,
+        relevanceLabel: tool.relevanceLabel,
+        matchedCategories: tool.matchedCategories,
+      })),
+      toolFacts: selectedTools.map(tool => ({ id: tool.id, handle: tool.handle, name: tool.name })),
+      decisionCriteria: ['Quality', 'Workflow fit', 'Ease of use', 'Integrations', 'Pricing'].map(name => ({ name })),
+      sourceMap: [],
+      internalLinks: [],
+    },
+    inputValidation: { passed: true, missingRequiredFields: [], inputWarnings: [], selectedTools: selectedTools.map(({ id, handle, name }) => ({ id, handle, name })), sourceMapCount: 0 },
+  }
 }
 
 const compareSource = {
@@ -237,7 +305,7 @@ assert.match(riskyValidation.errors.join('\n'), /High-risk expression/)
 const buyerLimits = structuredClone(guide)
 buyerLimits.bodyJson.blocks.find(block => block.type === 'tool_callout').verdict = exactWords(131)
 buyerLimits.bodyJson.blocks.find(block => block.type === 'section').html = `<p>${exactWords(171)}</p>`
-buyerLimits.bodyJson.blocks.find(block => block.type === 'faq').items[0].answer = exactWords(76)
+buyerLimits.bodyJson.blocks.find(block => block.type === 'faq').items[0].answer = exactWords(86)
 const buyerLimitsValidation = validateGeneratedContentPage(buyerLimits, guideSource)
 assert.equal(buyerLimitsValidation.ok, false)
 assert.equal(buyerLimitsValidation.checks.minRecommendedToolWordCount.passed, false)
@@ -416,6 +484,75 @@ assert.equal(contentGenerationTargetType('ALTERNATIVE'), 'compare')
 assert.equal(contentGenerationTargetType('BUYER_GUIDE'), 'guides')
 assert.equal(contentGenerationTargetType('TUTORIAL'), 'guides')
 
+const writingCategory = { id: 52, handle: 'ai-writing-assistants', name: 'AI Writing Assistants' }
+const summarizerCategory = { id: 45, handle: 'ai-summarizer', name: 'AI Summarizer' }
+const blogCategory = { id: 53, handle: 'ai-blog-generator', name: 'AI Blog Generator' }
+const hixValidation = validateSourceData(sourceDataForToolCheck(
+  writingCategory,
+  guideSourceTool(901, 'HIX.AI', 'AI writing copilot, AI writer, content writer, email writer, blog writer, and long-form article writer.', writingCategory),
+))
+assert.equal(hixValidation.ok, true, hixValidation.errors.join('\n'))
+const aiSummarizerValidation = validateSourceData(sourceDataForToolCheck(
+  summarizerCategory,
+  guideSourceTool(906, 'AI Summarizer', 'AI summarizer for turning long documents, articles, and notes into concise summaries.', summarizerCategory),
+))
+assert.equal(aiSummarizerValidation.ok, true, aiSummarizerValidation.errors.join('\n'))
+const screenAppValidation = validateSourceData(sourceDataForToolCheck(
+  summarizerCategory,
+  guideSourceTool(907, 'ScreenApp', 'Video summarizer and transcript summary tool for meetings, recordings, and notes.', summarizerCategory),
+))
+assert.equal(screenAppValidation.ok, true, screenAppValidation.errors.join('\n'))
+const komeValidation = validateSourceData(sourceDataForToolCheck(
+  summarizerCategory,
+  guideSourceTool(908, 'Kome AI', 'AI summary assistant for webpages, articles, videos, and research notes.', summarizerCategory),
+))
+assert.equal(komeValidation.ok, true, komeValidation.errors.join('\n'))
+const slideSpeakValidation = validateSourceData(sourceDataForToolCheck(
+  summarizerCategory,
+  guideSourceTool(909, 'SlideSpeak', 'AI presentation and document summarizer for slides, PDFs, and meeting material.', summarizerCategory),
+))
+assert.equal(slideSpeakValidation.ok, true, slideSpeakValidation.errors.join('\n'))
+const gizmoValidation = validateSourceData(sourceDataForToolCheck(
+  summarizerCategory,
+  guideSourceTool(910, 'Gizmo', 'Study flashcard and learning workflow tool with limited summary support.', summarizerCategory, { relevanceLabel: 'WEAK' }),
+))
+assert.equal(gizmoValidation.ok, true, gizmoValidation.errors.join('\n'))
+assert.equal(gizmoValidation.warnings.some(item => item.rule === 'categoryRelevanceReview' && item.categoryRisk === 'HIGH'), true)
+const designrrValidation = validateSourceData(sourceDataForToolCheck(
+  blogCategory,
+  guideSourceTool(911, 'Designrr', 'Content repurposing and ebook creation workflow with limited blog generation fit.', blogCategory, { relevanceLabel: 'WEAK' }),
+))
+assert.equal(designrrValidation.ok, true, designrrValidation.errors.join('\n'))
+assert.equal(designrrValidation.warnings.some(item => item.rule === 'categoryRelevanceReview' && item.categoryRisk === 'HIGH'), true)
+const contaminatedPageGoalSource = sourceDataForToolCheck(
+  writingCategory,
+  guideSourceTool(912, 'WriterFit', 'AI writing assistant for drafting, editing, and rewriting workflows.', writingCategory),
+)
+contaminatedPageGoalSource.aiInput.pageGoal = 'Help Best For: Students rewriting essays compare tools. Summary: polluted audience text.'
+const contaminatedPageGoalValidation = validateSourceData(contaminatedPageGoalSource)
+assert.equal(contaminatedPageGoalValidation.ok, true, contaminatedPageGoalValidation.errors.join('\n'))
+assert.equal(contaminatedPageGoalValidation.warnings.some(item => item.rule === 'buyerGuidePageGoalContamination'), true)
+const notionValidation = validateSourceData(sourceDataForToolCheck(
+  writingCategory,
+  guideSourceTool(901, 'Notion', 'Workspace database and project management tool.', writingCategory),
+))
+assert.equal(notionValidation.errors.some(error => /categoryRelevanceBlocked/.test(error) && /Notion/.test(error)), true)
+const deeplValidation = validateSourceData(sourceDataForToolCheck(
+  writingCategory,
+  guideSourceTool(901, 'DeepL', 'Translation-only translate text workflow.', writingCategory),
+))
+assert.equal(deeplValidation.errors.some(error => /categoryRelevanceBlocked/.test(error) && /DeepL/.test(error)), true)
+const bitbucketValidation = validateSourceData(sourceDataForToolCheck(
+  summarizerCategory,
+  guideSourceTool(901, 'Bitbucket', 'Git repository, code hosting, and version control platform.', summarizerCategory),
+))
+assert.equal(bitbucketValidation.errors.some(error => /categoryRelevanceBlocked/.test(error) && /Bitbucket/.test(error)), true)
+const zerogptValidation = validateSourceData(sourceDataForToolCheck(
+  summarizerCategory,
+  guideSourceTool(901, 'ZeroGPT', 'AI content detector and plagiarism detector.', summarizerCategory),
+))
+assert.equal(zerogptValidation.errors.some(error => /categoryRelevanceBlocked/.test(error) && /ZeroGPT/.test(error)), true)
+
 console.log(JSON.stringify({
   guide: guideValidation.metrics,
   compare: compareValidation.metrics,
@@ -430,6 +567,20 @@ console.log(JSON.stringify({
   factLevelSourceMap: factLevelSources.map(row => row.factType),
   categoryGuideWithoutToolCallouts: categoryGuideValidation.ok,
   unsupportedTypeRejected: !unsupportedValidation.ok,
+  categoryRelevanceFixtures: {
+    hixWritingAssistantAccepted: hixValidation.ok,
+    aiSummarizerAccepted: aiSummarizerValidation.ok,
+    screenAppSummarizerAccepted: screenAppValidation.ok,
+    komeSummarizerAccepted: komeValidation.ok,
+    slideSpeakSummarizerAccepted: slideSpeakValidation.ok,
+    gizmoSummarizerWarned: gizmoValidation.ok && gizmoValidation.warnings.some(item => item.rule === 'categoryRelevanceReview'),
+    designrrBlogGeneratorWarned: designrrValidation.ok && designrrValidation.warnings.some(item => item.rule === 'categoryRelevanceReview'),
+    contaminatedPageGoalWarned: contaminatedPageGoalValidation.warnings.some(item => item.rule === 'buyerGuidePageGoalContamination'),
+    notionWritingAssistantRejected: notionValidation.errors.some(error => /categoryRelevanceBlocked/.test(error)),
+    deeplWritingAssistantRejected: deeplValidation.errors.some(error => /categoryRelevanceBlocked/.test(error)),
+    bitbucketSummarizerRejected: bitbucketValidation.errors.some(error => /categoryRelevanceBlocked/.test(error)),
+    zerogptSummarizerRejected: zerogptValidation.errors.some(error => /categoryRelevanceBlocked/.test(error)),
+  },
   inputContracts: {
     buyerGuide: buyerInput.validation.passed,
     categoryGuide: categoryInput.validation.passed,

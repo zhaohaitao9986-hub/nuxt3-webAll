@@ -1,10 +1,59 @@
 import { createError } from 'h3'
 import prisma from '../../utils/prisma.js'
+import { buildContentSourceData } from './sourceBuilder.js'
+import { slugify } from './slugUtils.js'
 
 const BASE_CRITERIA = ['Ease of use', 'Output quality', 'Workflow fit', 'Integrations', 'Pricing', 'Support and reliability', 'Team adoption', 'Best-fit use case']
+const CATEGORY_KEYWORD_OPTIONS = {
+  'ai-writing-assistants': [
+    'Best AI Writing Assistants',
+    'AI Writing Assistant Software',
+    'Best AI Writing Tools',
+    'AI Writing Tools for Content Creation',
+  ],
+  'ai-summarizer': [
+    'Best AI Summarizer Tools',
+    'AI Summary Tools',
+    'Best AI Tools for Summarizing Content',
+    'AI Summarization Software',
+  ],
+}
+const CATEGORY_DECISION_CRITERIA = {
+  'ai-writing-assistants': [
+    'Writing Quality',
+    'Long-form Content',
+    'SEO Features',
+    'Templates',
+    'Ease of Use',
+    'Integrations',
+    'Pricing',
+    'Collaboration',
+  ],
+  'ai-summarizer': [
+    'Summary Accuracy',
+    'Supported Formats',
+    'Speed',
+    'Export Options',
+    'Pricing',
+  ],
+}
+const CATEGORY_AUDIENCES = {
+  'ai-writing-assistants': {
+    primaryAudience: 'Content marketers, freelance writers, and editorial teams comparing AI writing assistants for recurring content creation.',
+    secondaryAudience: 'Founders, students, and small business operators who need faster drafting, rewriting, and editing workflows.',
+  },
+  'ai-summarizer': {
+    primaryAudience: 'Researchers, students, analysts, and knowledge workers comparing tools for summarizing articles, PDFs, videos, and meeting content.',
+    secondaryAudience: 'Content teams and operators who need quick summaries for review, documentation, and internal sharing.',
+  },
+}
 
 function unique(values, max) {
   return [...new Set((values || []).map(value => String(value || '').trim()).filter(Boolean))].slice(0, max)
+}
+
+function sentence(value, max = 240) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max)
 }
 
 function toolSelect() {
@@ -95,11 +144,104 @@ async function explicitComparisonTool(toolId, categoryId, primaryToolId) {
 }
 
 function criteria(category, count) {
-  return unique([...(category?.feature || []), ...BASE_CRITERIA], count)
+  return unique([...(CATEGORY_DECISION_CRITERIA[category?.handle] || []), ...(category?.feature || []), ...BASE_CRITERIA], count)
 }
 
 function categoryAudience(category) {
   return category?.whoIsUse || `${category?.name || 'AI tool'} beginners, practitioners, and small teams`
+}
+
+function categoryAudienceProfile(category) {
+  const configured = CATEGORY_AUDIENCES[category?.handle]
+  if (configured) return configured
+  return {
+    primaryAudience: categoryAudience(category),
+    secondaryAudience: `Teams and individual practitioners evaluating ${category?.name || 'AI tools'} for workflow fit, pricing, and ease of adoption.`,
+  }
+}
+
+function targetKeyword(category, type) {
+  if (type !== 'BUYER_GUIDE') return `${category.name} Guide`
+  const options = CATEGORY_KEYWORD_OPTIONS[category.handle]
+  if (options?.length) return options[0]
+  return `Best ${category.name}`
+}
+
+function businessPageGoal(category) {
+  if (category?.handle === 'ai-paraphraser') {
+    return 'Help readers compare AI paraphrasing tools, evaluate rewriting quality and workflow fit, and choose a solution that matches their budget and content needs.'
+  }
+  if (category?.handle === 'ai-writing-assistants') {
+    return 'Help readers compare AI writing assistants and choose the best tool for drafting, editing, collaboration, and content production workflows.'
+  }
+  if (category?.handle === 'ai-summarizer') {
+    return 'Help readers compare AI summarizer tools and identify the best option for document, article, meeting, and research summarization workflows.'
+  }
+  return `Help readers compare ${category.name} tools, evaluate workflow fit, pricing, and practical trade-offs, and choose a solution that matches their content and business needs.`
+}
+
+function buyerGuideTitle(keyword) {
+  const normalized = sentence(keyword, 120)
+  if (!normalized) return 'AI Tools Guide in 2026'
+  return /\b(tools?|software|platforms?|apps?)\b/i.test(normalized)
+    ? `${normalized} in 2026`
+    : `${normalized} Tools in 2026`
+}
+
+function buyerGuideSlug(keyword, category) {
+  return slugify(keyword) || slugify(category?.handle || category?.name) || 'ai-tools'
+}
+
+function comparisonTitle(primary, secondary) {
+  return `${primary.name} vs ${secondary.name}: Detailed Comparison`
+}
+
+function comparisonSlug(primary, secondary) {
+  return slugify(`${primary.name} vs ${secondary.name}`)
+}
+
+function briefContext(category, selectedTools) {
+  return {
+    categoryName: category?.name || '',
+    categorySlug: category?.handle || '',
+    parentCategory: category?.level1?.name || '',
+    categorySummary: sentence(category?.whatIsSummary, 500),
+    coreCapabilities: unique(category?.feature || [], 8),
+    buyerQuestions: [
+      `Which ${category?.name || 'AI tools'} are strongest for the primary workflow?`,
+      'Which tools are broad platforms versus focused category specialists?',
+      'What trade-offs matter for quality, workflow fit, pricing, and team adoption?',
+    ],
+    contentAngles: [
+      'Compare tools by practical buyer criteria rather than generic popularity.',
+      'Explain limitations when a selected tool is broader than the category.',
+      'Prioritize tool-specific evidence, supported workflows, pricing context, and use cases.',
+    ],
+    selectedToolNames: selectedTools.map(tool => tool.name),
+  }
+}
+
+function briefTool(tool) {
+  return {
+    id: tool.id,
+    name: tool.name,
+    summary: sentence(tool.whatIsSummary || tool.description, 280),
+    selectionReason: tool.selectionReason || '',
+    relevanceLabel: tool.relevanceLabel || null,
+  }
+}
+
+async function selectedBuyerGuideTools(task, category, commonBrief) {
+  const sourceData = await buildContentSourceData({
+    ...task,
+    contentType: 'BUYER_GUIDE',
+    categoryId: category.id,
+    promptJson: {
+      ...(task.promptJson || {}),
+      brief: commonBrief,
+    },
+  })
+  return sourceData.selectedTools || []
 }
 
 function useCase(tool, category) {
@@ -123,18 +265,43 @@ export async function prepareDeterministicBrief(task) {
     const category = await categoryWithTools(task.categoryId)
     if (!category) throw createError({ statusCode: 400, statusMessage: 'prepareBriefMissingCategory' })
     const candidates = category.toolCategories.map(row => row.aiTool)
-    const tools = diversifiedTools(candidates, type === 'BUYER_GUIDE' ? Math.min(10, Math.max(5, task.limit || 5)) : 5)
-    if (tools.length < (type === 'BUYER_GUIDE' ? 5 : 3)) throw createError({ statusCode: 422, statusMessage: 'prepareBriefInsufficientCategoryTools' })
+    const tools = type === 'BUYER_GUIDE'
+      ? []
+      : diversifiedTools(candidates, 5)
+    if (type !== 'BUYER_GUIDE' && tools.length < 3) throw createError({ statusCode: 422, statusMessage: 'prepareBriefInsufficientCategoryTools' })
+    const audienceProfile = categoryAudienceProfile(category)
     const common = {
-      targetKeyword: type === 'BUYER_GUIDE' ? `best ${category.name.toLowerCase()} tools` : `${category.name.toLowerCase()} guide`,
+      targetKeyword: targetKeyword(category, type),
       pageGoal: type === 'BUYER_GUIDE'
-        ? `Help readers compare and choose the ${category.name} tools that best fit their workflow, budget, and experience level.`
+        ? businessPageGoal(category)
         : `Explain what ${category.name} tools are, who they are for, how they work, and how to choose one.`,
       searchIntent: type === 'BUYER_GUIDE' ? 'buyer_guide' : 'informational',
-      audience: categoryAudience(category),
+      audience: type === 'BUYER_GUIDE'
+        ? `${audienceProfile.primaryAudience} Secondary audience: ${audienceProfile.secondaryAudience}`
+        : categoryAudience(category),
+      ...(type === 'BUYER_GUIDE' ? audienceProfile : {}),
     }
-    if (type === 'BUYER_GUIDE') return { ...common, selectedToolIds: tools.map(tool => tool.id), decisionCriteria: criteria(category, 8) }
+    if (type === 'BUYER_GUIDE') {
+      const decisionCriteria = criteria(category, 8)
+      const selectedTools = await selectedBuyerGuideTools(task, category, {
+        ...common,
+        decisionCriteria,
+      })
+      if (selectedTools.length < 5) throw createError({ statusCode: 422, statusMessage: 'prepareBriefInsufficientCategoryTools' })
+      const briefTools = selectedTools.map(briefTool)
+      return {
+        title: buyerGuideTitle(common.targetKeyword),
+        slug: buyerGuideSlug(common.targetKeyword, category),
+        ...common,
+        selectedToolIds: selectedTools.map(tool => tool.id),
+        selectedTools: briefTools,
+        decisionCriteria,
+        contentContext: briefContext(category, briefTools),
+      }
+    }
     return {
+      title: `${category.name} Guide`,
+      slug: slugify(category.handle || category.name),
       ...common,
       representativeToolIds: tools.slice(0, 5).map(tool => tool.id),
       categoryContext: {
@@ -181,6 +348,8 @@ export async function prepareDeterministicBrief(task) {
     const dimensions = criteria(category, 8)
     const sharedUseCases = unique((primary.useCases || []).filter(value => (secondary.useCases || []).map(item => item.toLowerCase()).includes(value.toLowerCase())), 6)
     return {
+      title: comparisonTitle(primary, secondary),
+      slug: comparisonSlug(primary, secondary),
       primaryToolId: primary.id, secondaryToolId: secondary.id,
       comparisonIntent: `Help readers choose between ${primary.name} and ${secondary.name} for overlapping ${category?.name || 'AI'} workflows.`,
       targetAudience: `${categoryAudience(category)} comparing a two-tool shortlist`,

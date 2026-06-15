@@ -84,8 +84,30 @@ function normalizeJson(value) {
   return value
 }
 
+function metricFromValidation(validationJson, field) {
+  if (!validationJson || typeof validationJson !== 'object') return null
+  const direct = validationJson[field]
+  if (direct !== undefined && direct !== null && direct !== '') return direct
+  const metric = validationJson.metrics?.[field]
+  return metric !== undefined && metric !== null && metric !== '' ? metric : null
+}
+
+function taskToolPair(row) {
+  const brief = row.promptJson?.brief && typeof row.promptJson.brief === 'object' ? row.promptJson.brief : {}
+  const primaryName = brief.primaryToolName || row.tool?.name || ''
+  const secondaryName = brief.secondaryToolName || brief.secondaryTool?.name || ''
+  if (primaryName && secondaryName) return `${primaryName} vs ${secondaryName}`
+  return brief.comparisonTitle || ''
+}
+
+const TASK_RELATIONS = {
+  category: { select: { id: true, name: true, handle: true } },
+  tool: { select: { id: true, name: true, handle: true } },
+}
+
 const BRIEF_FIELDS = [
-  'selectedToolIds', 'targetKeyword', 'pageGoal', 'searchIntent', 'audience', 'decisionCriteria',
+  'selectedToolIds', 'selectedTools', 'targetKeyword', 'pageGoal', 'searchIntent', 'audience',
+  'primaryAudience', 'secondaryAudience', 'decisionCriteria', 'contentContext',
   'primaryToolId', 'tutorialGoal', 'workflowContext', 'prerequisiteKnowledge', 'outputChecklist', 'commonMistakes',
   'secondaryToolId', 'comparisonIntent', 'targetAudience', 'alternativeToolIds', 'reasonToSwitch',
   'selectionCriteria', 'representativeToolIds', 'relatedToolIds', 'sharedUseCases',
@@ -214,8 +236,12 @@ function serializeTask(row) {
     target_type: row.targetType || '',
     categoryId: row.categoryId,
     category_id: row.categoryId,
+    categorySlug: row.category?.handle || '',
+    category_slug: row.category?.handle || '',
     toolId: row.toolId,
     tool_id: row.toolId,
+    toolPair: taskToolPair(row),
+    tool_pair: taskToolPair(row),
     limit: row.limitCount,
     limitCount: row.limitCount,
     limit_count: row.limitCount,
@@ -236,6 +262,9 @@ function serializeTask(row) {
     raw_output: row.rawOutput || '',
     validationJson: row.validationJson,
     validation_json: row.validationJson,
+    score: metricFromValidation(row.validationJson, 'score'),
+    wordCount: metricFromValidation(row.validationJson, 'wordCount'),
+    word_count: metricFromValidation(row.validationJson, 'wordCount'),
     errorMessage: row.errorMessage || '',
     error_message: row.errorMessage || '',
     rejectReason: row.rejectReason || '',
@@ -308,6 +337,7 @@ export async function listContentGenerationTasks({ page = 1, pageSize = 20, stat
     prisma.contentGenerationTask.count({ where }),
     prisma.contentGenerationTask.findMany({
       where,
+      include: TASK_RELATIONS,
       skip: (safePage - 1) * safePageSize,
       take: safePageSize,
       orderBy: { updatedAt: 'desc' },
@@ -325,6 +355,7 @@ export async function listContentGenerationTasks({ page = 1, pageSize = 20, stat
 export async function getContentGenerationTask(id) {
   const row = await prisma.contentGenerationTask.findUnique({
     where: { id: Number(id) },
+    include: TASK_RELATIONS,
   })
   return serializeTask(row)
 }
@@ -337,6 +368,7 @@ export async function listContentGenerationTasksByIds(ids = []) {
 
   const rows = await prisma.contentGenerationTask.findMany({
     where: { id: { in: normalizedIds } },
+    include: TASK_RELATIONS,
   })
   return rows.map(serializeTask)
 }
@@ -441,6 +473,9 @@ export async function updateContentGenerationTask(id, input, auth) {
   }
   if (input.validationJson !== undefined || input.validation_json !== undefined) {
     data.validationJson = normalizeJson(input.validationJson ?? input.validation_json)
+  }
+  if (input.rejectReason !== undefined || input.reject_reason !== undefined) {
+    data.rejectReason = String((input.rejectReason ?? input.reject_reason) || '')
   }
   if (input.errorMessage !== undefined || input.error_message !== undefined) {
     data.errorMessage = String((input.errorMessage ?? input.error_message) || '')
@@ -667,4 +702,109 @@ export async function markContentGenerationTaskPublished(id, publishedContent, a
   }, { maxWait: 10000, timeout: 30000 })
 
   return serializeTask(updated)
+}
+
+const MAX_BATCH_DELETE = 50
+
+function normalizeTaskIds(ids) {
+  return [...new Set((Array.isArray(ids) ? ids : [])
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id)))]
+}
+
+function assertTasksDeletable(rows) {
+  const generating = rows.filter((row) => {
+    const status = DB_TO_STATUS[row.status] || String(row.status || '').toLowerCase()
+    return status === 'generating'
+  })
+  if (generating.length) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: `生成中的任务不能删除：${generating.map(row => row.id).join(', ')}`,
+    })
+  }
+}
+
+async function deleteLinkedContentPages(tx, contentPageIds = []) {
+  const uniqueIds = [...new Set(contentPageIds.map(Number).filter(Boolean))]
+  if (!uniqueIds.length) return []
+
+  await tx.contentGenerationTask.updateMany({
+    where: { contentPageId: { in: uniqueIds } },
+    data: { contentPageId: null },
+  })
+  await tx.contentPage.deleteMany({ where: { id: { in: uniqueIds } } })
+  return uniqueIds
+}
+
+export async function deleteContentGenerationTask(id, auth) {
+  const taskId = Number(id)
+  if (!Number.isFinite(taskId)) {
+    throw createError({ statusCode: 400, statusMessage: '任务 ID 无效' })
+  }
+
+  const task = await prisma.contentGenerationTask.findUnique({ where: { id: taskId } })
+  if (!task) {
+    throw createError({ statusCode: 404, statusMessage: '任务不存在' })
+  }
+  assertTasksDeletable([task])
+
+  const deletedContentPageIds = await prisma.$transaction(async (tx) => {
+    const pageIds = await deleteLinkedContentPages(tx, task.contentPageId ? [task.contentPageId] : [])
+    await tx.contentGenerationTask.delete({ where: { id: taskId } })
+    return pageIds
+  }, { maxWait: 10000, timeout: 30000 })
+
+  return {
+    ok: true,
+    id: taskId,
+    deletedContentPageIds,
+    deletedByAdminId: actorId(auth),
+  }
+}
+
+export async function batchDeleteContentGenerationTasks(input, auth) {
+  const ids = normalizeTaskIds(input?.ids)
+  if (!ids.length) {
+    throw createError({ statusCode: 400, statusMessage: '请选择需要删除的任务' })
+  }
+  if (ids.length > MAX_BATCH_DELETE) {
+    throw createError({ statusCode: 400, statusMessage: `单次最多删除 ${MAX_BATCH_DELETE} 个任务` })
+  }
+
+  const rows = await prisma.contentGenerationTask.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, status: true, contentPageId: true, title: true },
+  })
+  const foundIds = new Set(rows.map(row => row.id))
+  const missingIds = ids.filter(id => !foundIds.has(id))
+  if (missingIds.length) {
+    throw createError({ statusCode: 404, statusMessage: `任务不存在：${missingIds.join(', ')}` })
+  }
+
+  assertTasksDeletable(rows)
+
+  const contentPageIds = rows.map(row => row.contentPageId).filter(Boolean)
+  const deletedContentPageIds = await prisma.$transaction(async (tx) => {
+    const pageIds = await deleteLinkedContentPages(tx, contentPageIds)
+    await tx.contentGenerationTask.deleteMany({ where: { id: { in: ids } } })
+    return pageIds
+  }, { maxWait: 10000, timeout: 30000 })
+
+  return {
+    ok: true,
+    total: ids.length,
+    deleted: ids.length,
+    deletedContentPageIds,
+    deletedByAdminId: actorId(auth),
+    results: ids.map((id) => {
+      const row = rows.find(item => item.id === id)
+      return {
+        id,
+        ok: true,
+        title: row?.title || '',
+        hadPublishedPage: Boolean(row?.contentPageId),
+      }
+    }),
+  }
 }

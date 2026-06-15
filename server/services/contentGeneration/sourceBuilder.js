@@ -1,5 +1,6 @@
 import prisma from '../../utils/prisma.js'
 import { enforceInputContract } from './inputContracts.js'
+import { slugify } from './slugUtils.js'
 import {
   buildSourceMap,
   claimIsUsable,
@@ -10,6 +11,7 @@ import {
   normalizeStringList,
   taskBrief,
 } from './sourceSelectors.js'
+import { assessGuideToolCategoryRisk } from './validators.js'
 
 const SUPPORTED_CONTENT_TYPES = new Set(['BUYER_GUIDE', 'CATEGORY_GUIDE', 'TUTORIAL', 'COMPARISON', 'ALTERNATIVE'])
 const GUIDE_MIN_SELECTED_TOOLS = 5
@@ -73,16 +75,6 @@ const GUIDE_CORE_TOOL_HANDLES = {
     'summarizer-org',
     'ai-summarizer-best',
   ]),
-}
-
-export function slugify(value) {
-  return String(value || '')
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9\-]/g, '')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
 }
 
 function toNumber(value) {
@@ -520,27 +512,50 @@ function dedupeTools(tools) {
   return Array.from(new Map((tools || []).map(tool => [tool.id, tool])).values())
 }
 
+function withCategoryRisk(tool, category) {
+  const risk = assessGuideToolCategoryRisk(tool, category?.level2 || category?.raw || category)
+  return {
+    ...tool,
+    categoryRisk: risk.categoryRisk,
+    categoryRiskReason: risk.reason,
+    categoryRiskAction: risk.action,
+    categoryRiskDiagnostic: risk,
+  }
+}
+
 function selectGuideTools(scoredTools) {
   const deduped = dedupeTools(scoredTools)
-  const strong = sortGuideTools(deduped.filter(tool => tool.relevanceLabel === 'STRONG'))
-  const medium = sortGuideTools(deduped.filter(tool => tool.relevanceLabel === 'MEDIUM'))
+  const eligible = deduped.filter(tool => tool.categoryRisk !== 'BLOCKED')
+  const strong = sortGuideTools(eligible.filter(tool => tool.relevanceLabel === 'STRONG'))
+  const medium = sortGuideTools(eligible.filter(tool => tool.relevanceLabel === 'MEDIUM'))
   const selected = dedupeTools([...strong, ...medium]).slice(0, GUIDE_MAX_SELECTED_TOOLS)
+  const blocked = deduped.filter(tool => tool.categoryRisk === 'BLOCKED')
   return {
     selected: selected.length >= GUIDE_MIN_SELECTED_TOOLS ? selected : selected,
     counts: {
       candidateToolCount: scoredTools.length,
       dedupedCandidateToolCount: deduped.length,
+      eligibleCandidateToolCount: eligible.length,
+      blockedCandidateToolCount: blocked.length,
       STRONG: strong.length,
       MEDIUM: medium.length,
-      WEAK: deduped.filter(tool => tool.relevanceLabel === 'WEAK').length,
-      INVALID: deduped.filter(tool => tool.relevanceLabel === 'INVALID').length,
+      WEAK: eligible.filter(tool => tool.relevanceLabel === 'WEAK').length,
+      INVALID: eligible.filter(tool => tool.relevanceLabel === 'INVALID').length,
+      blockedTools: blocked.map(tool => ({
+        toolId: tool.id,
+        toolName: tool.name,
+        handle: tool.handle,
+        relevanceLabel: tool.relevanceLabel,
+        categoryRisk: tool.categoryRisk,
+        reason: tool.categoryRiskReason,
+      })),
     },
   }
 }
 
 async function fetchGuideToolSelection(task, category) {
   const candidates = await fetchGuideCandidateTools(category?.level2?.id || task.categoryId)
-  const scored = candidates.map(tool => scoreGuideTool(tool, category))
+  const scored = candidates.map(tool => withCategoryRisk(scoreGuideTool(tool, category), category))
   const selection = selectGuideTools(scored)
   const fallbackPool = selection.selected.length < GUIDE_MIN_SELECTED_TOOLS
     ? await fetchGuideFallbackTools(category, selection.selected.map(tool => tool.id))
@@ -558,14 +573,19 @@ async function fetchGuideToolSelection(task, category) {
       ...selection.counts,
       selectedToolsCount: selection.selected.length,
       fallbackToolsCount: fallbackTools.length,
+      toolSelectionStatus: selection.selected.length >= GUIDE_MIN_SELECTED_TOOLS ? 'READY' : 'NEEDS_REVIEW',
       toolSelectionStrategy: 'l2-category-relevance-score',
       selectedToolIds: selection.selected.map(tool => tool.id),
       fallbackToolIds: fallbackTools.map(tool => tool.id),
+      blockedTools: selection.counts.blockedTools,
+      categoryRelevanceDiagnostics: scored.map(tool => tool.categoryRiskDiagnostic),
       toolSelectionDiagnostics: scored.map(tool => ({
         toolId: tool.id,
         toolName: tool.name,
         score: tool.categoryRelevanceScore,
         label: tool.relevanceLabel,
+        categoryRisk: tool.categoryRisk,
+        categoryRiskReason: tool.categoryRiskReason,
         representativeScore: tool.representativeScore,
         selectionReason: tool.selectionReason,
         matchedCategories: tool.matchedCategories,
@@ -652,6 +672,8 @@ async function buildBuyerGuide(task, category, relatedCategories) {
         selectedTools: sortGuideTools(
           (await fetchToolsByIds(explicitIds, 10))
             .map(tool => scoreGuideTool(tool, category))
+            .map(tool => withCategoryRisk(tool, category))
+            .filter(tool => tool.categoryRisk !== 'BLOCKED')
             .filter(tool => ['STRONG', 'MEDIUM'].includes(tool.relevanceLabel)),
         ).slice(0, 10),
         fallbackTools: [],
