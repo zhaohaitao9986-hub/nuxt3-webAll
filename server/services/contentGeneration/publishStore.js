@@ -47,14 +47,23 @@ function safeDomain(url) {
   }
 }
 
+function cleanComparisonSlug(value) {
+  return String(value || '').trim().replace(/-comparison$/i, '')
+}
+
 function contentPageData(task, content) {
   const meta = content.contentPage || {}
-  const slug = meta.slug || task.slug
   const type = requireContentType(meta.type || task.contentType)
+  const slug = type === 'COMPARISON'
+    ? cleanComparisonSlug(task.slug || meta.slug)
+    : meta.slug || task.slug
+  const canonicalPath = type === 'COMPARISON'
+    ? `/compare/${slug}`
+    : meta.canonicalPath || `/${task.targetType || 'content'}/${slug}`
   return {
     type,
     slug,
-    canonicalPath: meta.canonicalPath || `/${task.targetType || 'content'}/${slug}`,
+    canonicalPath,
     title: meta.title || task.title,
     metaTitle: meta.metaTitle || meta.meta_title || null,
     metaDescription: meta.metaDescription || meta.meta_description || null,

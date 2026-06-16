@@ -243,6 +243,29 @@ assert.deepEqual(PRODUCTION_LIMITS.comparison, { minWords: 1800, maxWords: 3000 
 assert.equal(PRODUCTION_LIMITS.compare.minWords, 1500)
 assert.equal(PRODUCTION_LIMITS.compare.maxWords, 2500)
 
+const guideWorkflowTopics = structuredClone(guide)
+guideWorkflowTopics.bodyJson.blocks.find(block => block.heading === 'Common Mistakes and Use Cases').heading = 'Common Mistakes and Pitfalls'
+const guideWorkflowTopicsValidation = validateGeneratedContentPage(guideWorkflowTopics, guideSource)
+assert.equal(guideWorkflowTopicsValidation.checks.hasUseCases.passed, true, guideWorkflowTopicsValidation.errors.join('\n'))
+assert.equal(guideWorkflowTopicsValidation.checks.requiredTopics.actual.missing.includes('howToChoose'), false)
+assert.equal(guideWorkflowTopicsValidation.checks.requiredTopics.actual.missing.includes('useCases'), false)
+
+const missingGuideUseCasesTopic = structuredClone(guide)
+missingGuideUseCasesTopic.bodyJson.blocks = missingGuideUseCasesTopic.bodyJson.blocks.filter(block => block.type !== 'decision_tree')
+missingGuideUseCasesTopic.bodyJson.blocks.find(block => block.heading === 'Workflow and Implementation Steps').heading = 'Operational Rollout Notes'
+missingGuideUseCasesTopic.bodyJson.blocks.find(block => block.heading === 'Common Mistakes and Use Cases').heading = 'Common Mistakes and Pitfalls'
+const missingGuideUseCasesTopicValidation = validateGeneratedContentPage(missingGuideUseCasesTopic, guideSource)
+assert.equal(missingGuideUseCasesTopicValidation.failedChecks.includes('requiredTopics'), true)
+assert.equal(missingGuideUseCasesTopicValidation.checks.requiredTopics.actual.missing.includes('useCases'), true)
+
+const missingGuideHowToChooseTopic = structuredClone(guide)
+missingGuideHowToChooseTopic.bodyJson.blocks = missingGuideHowToChooseTopic.bodyJson.blocks.filter(block => block.type !== 'decision_tree')
+missingGuideHowToChooseTopic.bodyJson.blocks.find(block => block.heading === 'Workflow and Implementation Steps').heading = 'Operational Rollout Notes'
+missingGuideHowToChooseTopic.bodyJson.blocks.find(block => block.heading === 'Final Recommendation, Pricing, and How to Choose').heading = 'Closing Notes and Pricing Context'
+const missingGuideHowToChooseTopicValidation = validateGeneratedContentPage(missingGuideHowToChooseTopic, guideSource)
+assert.equal(missingGuideHowToChooseTopicValidation.failedChecks.includes('requiredTopics'), true)
+assert.equal(missingGuideHowToChooseTopicValidation.checks.requiredTopics.actual.missing.includes('howToChoose'), true)
+
 const comparisonWithinNewWordRange = structuredClone(compare)
 comparisonWithinNewWordRange.bodyJson.blocks.find(block => block.type === 'methodology').text += ` ${exactWords(2725 - compareValidation.metrics.wordCount)}`
 const comparisonWithinNewWordRangeValidation = validateGeneratedContentPage(comparisonWithinNewWordRange, compareSource)

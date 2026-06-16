@@ -462,10 +462,28 @@ export function validateGeneratedContentPage(page, sourceData = null) {
   }))
   const headingsText = blocks.map(block => `${block?.heading || ''} ${block?.title || ''} ${block?.type || ''}`).join('\n')
   const fullBodyText = `${headingsText}\n${editorialText}`
+  const headingForBlock = block => `${block?.heading || ''} ${block?.title || ''}`
   const hasScenariosBlock = blocks.some(block => block?.type === 'scenarios')
-  const hasUseCaseHeading = blocks.some(block => /use cases|typical use cases|scenarios/i.test(`${block?.heading || ''} ${block?.title || ''}`))
-  const hasPricingHeading = blocks.some(block => /pricing comparison|pricing and plans|\bpricing\b|\bcost\b|\bplans\b/i.test(`${block?.heading || ''} ${block?.title || ''}`))
+  const hasDecisionTreeBlock = blocks.some(block => block?.type === 'decision_tree')
+  const hasUseCaseHeading = blocks.some(block => /use cases|typical use cases|scenarios/i.test(headingForBlock(block)))
+  const hasGuideUseCaseHeading = blocks.some(block => /use cases|workflow|implementation/i.test(headingForBlock(block)))
+  const hasHowToChooseHeading = blocks.some(block => /how to choose|decision guide|final recommendation|workflow and implementation steps/i.test(headingForBlock(block)))
+  const hasPricingHeading = blocks.some(block => /pricing comparison|pricing and plans|\bpricing\b|\bcost\b|\bplans\b/i.test(headingForBlock(block)))
   const hasPricingComparisonFacts = Boolean(sourceData?.aiInput?.pricingComparisonFacts?.length)
+  const hasSharedUseCases = [
+    sourceData?.sharedUseCases,
+    sourceData?.aiInput?.sharedUseCases,
+    page.guidePage?.sharedUseCases,
+    page.guidePage?.useCases,
+    page.bodyJson?.meta?.sharedUseCases,
+    page.bodyJson?.meta?.useCases,
+  ].some(row => Array.isArray(row) && row.length > 0)
+  const hasUseCases = /use case|scenario|workflow|when to use|implementation/i.test(fullBodyText)
+    || hasScenariosBlock
+    || hasDecisionTreeBlock
+    || hasUseCaseHeading
+    || hasGuideUseCaseHeading
+    || hasSharedUseCases
   const topics = isCompare
     ? COMPARE_REQUIRED_TOPICS
     : pageType === 'CATEGORY_GUIDE'
@@ -474,15 +492,16 @@ export function validateGeneratedContentPage(page, sourceData = null) {
         ? GUIDE_REQUIRED_TOPICS.filter(topic => !['howToChoose', 'keyCriteria', 'recommendedTools', 'decisionGuidance'].includes(topic.key))
         : GUIDE_REQUIRED_TOPICS
   const semanticTopicCoverage = {
+    howToChoose: !isCompare && (hasDecisionTreeBlock || hasHowToChooseHeading),
     keyCriteria: blocks.some(block => block?.type === 'framework' && (block.criteria?.length || 0) > 0),
     recommendedTools: toolCallouts.length >= (limits.minRecommendedTools || 1),
-    decisionGuidance: blocks.some(block => block?.type === 'decision_tree' && (block.branches?.length || 0) > 0),
+    decisionGuidance: hasDecisionTreeBlock && blocks.some(block => block?.type === 'decision_tree' && (block.branches?.length || 0) > 0),
     featureMatrix: isCompare && matrixRows.length > 0,
     criteriaAnalysis: isCompare && criteria.length > 0,
     bestForPrimary: isCompare && hasCompareBestForCoverage(page, sourceData, fullBodyText, 'primary'),
     bestForSecondary: isCompare && hasCompareBestForCoverage(page, sourceData, fullBodyText, 'secondary'),
     pricingComparison: isCompare && (hasPricingHeading || hasPricingComparisonFacts),
-    useCases: isCompare && (hasScenariosBlock || hasUseCaseHeading),
+    useCases: hasUseCases,
   }
   const missingTopics = topics
     .filter(topic => !topic.pattern.test(fullBodyText) && !semanticTopicCoverage[topic.key])
@@ -490,7 +509,6 @@ export function validateGeneratedContentPage(page, sourceData = null) {
   const hasMethodology = blocks.some(block => block?.type === 'methodology' && countEnglishWords(block.text || '') >= 40)
   const hasPricingContext = /pricing|paid tier|free tier|trial|billing|plan|official pricing|verify current pricing/i.test(fullBodyText)
   const hasDecisionGuidance = /decision|choose|right fit|suitable for|recommendation|bottom line/i.test(fullBodyText)
-  const hasUseCases = /use case|scenario|workflow|when to use/i.test(fullBodyText) || hasScenariosBlock || hasUseCaseHeading
   const sourceTypes = [...(sourceData?.sources || []), ...(page.sources || [])].map(source => String(source?.sourceType || ''))
   const hasOfficialOrInternalSources = sourceTypes.some(type => /OFFICIAL|INTERNAL/i.test(type))
   const sourceConsistency = sourceData
