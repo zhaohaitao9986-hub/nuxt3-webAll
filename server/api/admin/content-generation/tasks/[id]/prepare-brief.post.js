@@ -5,6 +5,11 @@ import { buildContentSourceData } from '~/server/services/contentGeneration/sour
 import { validateSourceData } from '~/server/services/contentGeneration/validators'
 import { uniqueContentGenerationSlug } from '~/server/services/contentGeneration/slugUtils'
 
+function normalizeOptionalCategoryId(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : null
+}
+
 export default defineEventHandler(async (event) => {
   const auth = assertAnyAdmin(event)
   const id = getRouterParam(event, 'id')
@@ -13,10 +18,19 @@ export default defineEventHandler(async (event) => {
   if (!task) throw createError({ statusCode: 404, statusMessage: '任务不存在' })
 
   try {
+    const contentType = String(body?.contentType || task.contentType || '').toUpperCase()
+    const isComparison = contentType === 'COMPARISON'
+    const categoryIdBefore = task.categoryId ?? null
+    const manualCategoryId = body?.lockCategory === true
+      ? normalizeOptionalCategoryId(body?.categoryId)
+      : null
+
     const seedTask = {
       ...task,
-      contentType: body?.contentType || task.contentType,
-      categoryId: body?.categoryId || task.categoryId,
+      contentType,
+      categoryId: isComparison ? null : (normalizeOptionalCategoryId(body?.categoryId) ?? task.categoryId),
+      categoryIdBefore,
+      manualCategoryId: isComparison ? manualCategoryId : null,
       toolId: body?.primaryToolId || task.toolId,
       promptJson: {
         ...(task.promptJson || {}),
@@ -27,6 +41,9 @@ export default defineEventHandler(async (event) => {
       },
     }
     const brief = await prepareDeterministicBrief(seedTask)
+    const resolvedCategoryId = brief.resolvedCategoryId
+      ?? (isComparison ? null : (normalizeOptionalCategoryId(body?.categoryId) ?? task.categoryId))
+
     const preparedSlug = await uniqueContentGenerationSlug(brief.slug || brief.targetKeyword || brief.title || task.slug, {
       contentType: seedTask.contentType,
       excludeTaskId: id,
@@ -36,9 +53,16 @@ export default defineEventHandler(async (event) => {
       title: preparedTitle,
       slug: preparedSlug,
       contentType: seedTask.contentType,
-      categoryId: seedTask.categoryId || null,
+      categoryId: resolvedCategoryId,
       toolId: brief.primaryToolId || task.toolId || null,
-      promptJson: { ...(task.promptJson || {}), brief, briefPreparedAt: new Date().toISOString(), briefPreparedBy: 'deterministic-rules' },
+      promptJson: {
+        ...(task.promptJson || {}),
+        brief,
+        briefPreparedAt: new Date().toISOString(),
+        briefPreparedBy: 'deterministic-rules',
+        categoryIdBefore,
+        categoryIdAfter: resolvedCategoryId,
+      },
       sourceDataJson: null,
       validationJson: null,
       errorMessage: '',
@@ -53,6 +77,9 @@ export default defineEventHandler(async (event) => {
     return {
       task: updated,
       brief,
+      categorySelection: brief.categorySelection || null,
+      categoryIdBefore,
+      categoryIdAfter: resolvedCategoryId,
       inputSummary: {
         inputContractType: validation.inputContract?.inputContractType || sourceData.contentType,
         selectedTools: validation.inputContract?.selectedTools || [],

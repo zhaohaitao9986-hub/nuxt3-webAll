@@ -339,6 +339,70 @@ rankingFaq.bodyJson.blocks.find(block => block.type === 'faq').items[0].question
 const rankingFaqValidation = validateGeneratedContentPage(rankingFaq, guideSource)
 assert.equal(rankingFaqValidation.checks.faqQuestionStyle.passed, false)
 
+const writingCategory = { id: 52, handle: 'ai-writing-assistants', name: 'AI Writing Assistants' }
+const summarizerCategory = { id: 45, handle: 'ai-summarizer', name: 'AI Summarizer' }
+const blogCategory = { id: 53, handle: 'ai-blog-generator', name: 'AI Blog Generator' }
+const emailCategory = { id: 54, handle: 'ai-email-generator', name: 'AI Email Generator' }
+
+const summarizerMetaSource = sourceDataForToolCheck(
+  summarizerCategory,
+  guideSourceTool(906, 'AI Summarizer', 'AI summarizer for long documents and articles.', summarizerCategory),
+)
+const summarizerMetaGuide = structuredClone(guide)
+summarizerMetaGuide.contentPage.metaTitle = 'Best AI Summarizer Tools in 2026'
+const summarizerMetaValidation = validateGeneratedContentPage(summarizerMetaGuide, summarizerMetaSource)
+assert.equal(
+  summarizerMetaValidation.errors.some(error => /must not name specific tools on guide pages/.test(error)),
+  false,
+  summarizerMetaValidation.errors.join('\n'),
+)
+
+const writingAssistantMetaSource = sourceDataForToolCheck(
+  writingCategory,
+  guideSourceTool(920, 'AI Writing Assistant', 'AI writing assistant for drafting and editing.', writingCategory),
+)
+const writingAssistantMetaGuide = structuredClone(guide)
+writingAssistantMetaGuide.contentPage.metaTitle = 'Best AI Writing Assistants'
+const writingAssistantMetaValidation = validateGeneratedContentPage(writingAssistantMetaGuide, writingAssistantMetaSource)
+assert.equal(
+  writingAssistantMetaValidation.errors.some(error => /must not name specific tools on guide pages/.test(error)),
+  false,
+  writingAssistantMetaValidation.errors.join('\n'),
+)
+
+const emailMetaSource = sourceDataForToolCheck(
+  emailCategory,
+  guideSourceTool(921, 'AI Email Generator', 'AI email generator for outreach and newsletters.', emailCategory),
+)
+const emailMetaGuide = structuredClone(guide)
+emailMetaGuide.contentPage.metaTitle = 'Best AI Email Generator Tools'
+const emailMetaValidation = validateGeneratedContentPage(emailMetaGuide, emailMetaSource)
+assert.equal(
+  emailMetaValidation.errors.some(error => /must not name specific tools on guide pages/.test(error)),
+  false,
+  emailMetaValidation.errors.join('\n'),
+)
+
+const grammarlyMetaSource = sourceDataForToolCheck(
+  writingCategory,
+  guideSourceTool(901, 'Grammarly', 'AI grammar checker and writing editor.', writingCategory),
+)
+const grammarlyMetaGuide = structuredClone(guide)
+grammarlyMetaGuide.contentPage.metaTitle = 'Best Grammarly Alternatives for Writers'
+const grammarlyMetaValidation = validateGeneratedContentPage(grammarlyMetaGuide, grammarlyMetaSource)
+assert.equal(
+  grammarlyMetaValidation.errors.some(error => /must not name specific tools on guide pages/.test(error)),
+  true,
+)
+
+const quillBotMetaGuide = structuredClone(guide)
+quillBotMetaGuide.contentPage.metaTitle = 'Best QuillBot for Paraphrasing'
+const quillBotMetaValidation = validateGeneratedContentPage(quillBotMetaGuide, grammarlyMetaSource)
+assert.equal(
+  quillBotMetaValidation.errors.some(error => /must not name specific tools on guide pages/.test(error)),
+  true,
+)
+
 const groundedUseCase = structuredClone(guide)
 groundedUseCase.bodyJson.blocks.find(block => block.type === 'tool_callout').verdict = `${exactWords(105)} Keyword research supports the editorial workflow.`
 groundedUseCase.bodyJson.blocks.find(block => block.type === 'tool_callout').toolHandle = tools[0].handle
@@ -498,9 +562,6 @@ assert.equal(contentGenerationTargetType('ALTERNATIVE'), 'compare')
 assert.equal(contentGenerationTargetType('BUYER_GUIDE'), 'guides')
 assert.equal(contentGenerationTargetType('TUTORIAL'), 'guides')
 
-const writingCategory = { id: 52, handle: 'ai-writing-assistants', name: 'AI Writing Assistants' }
-const summarizerCategory = { id: 45, handle: 'ai-summarizer', name: 'AI Summarizer' }
-const blogCategory = { id: 53, handle: 'ai-blog-generator', name: 'AI Blog Generator' }
 const hixValidation = validateSourceData(sourceDataForToolCheck(
   writingCategory,
   guideSourceTool(901, 'HIX.AI', 'AI writing copilot, AI writer, content writer, email writer, blog writer, and long-form article writer.', writingCategory),
@@ -577,6 +638,11 @@ console.log(JSON.stringify({
   buyerGuideUpperLimitsRejected: !buyerLimitsValidation.ok,
   absoluteClaimsRejected: !absoluteValidation.ok,
   rankingFaqRejected: !rankingFaqValidation.ok,
+  guideMetaCategoryKeywordsAllowed: !summarizerMetaValidation.errors.some(error => /must not name specific tools/.test(error))
+    && !writingAssistantMetaValidation.errors.some(error => /must not name specific tools/.test(error))
+    && !emailMetaValidation.errors.some(error => /must not name specific tools/.test(error)),
+  guideMetaBrandNamesBlocked: grammarlyMetaValidation.errors.some(error => /must not name specific tools/.test(error))
+    && quillBotMetaValidation.errors.some(error => /must not name specific tools/.test(error)),
   useCaseGroundingAccepted: groundedUseCaseValidation.checks.toolGrounding.passed,
   factLevelSourceMap: factLevelSources.map(row => row.factType),
   categoryGuideWithoutToolCallouts: categoryGuideValidation.ok,

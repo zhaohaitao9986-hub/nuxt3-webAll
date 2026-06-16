@@ -3,16 +3,22 @@ import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
 import { validateGeneratedContentPage } from '../server/services/contentGeneration/validators.js'
 
-function productionScoreFromValidation(validation) {
-  const raw = validation.checks?.productionScore?.actual ?? validation.score ?? 0
-  const score = Number(raw)
-  return Number.isFinite(score) ? score : 0
+function canManualApproveValidation(validation) {
+  const score = Number(validation.checks?.productionScore?.actual ?? validation.score ?? 0)
+  const failedChecks = Array.isArray(validation.failedChecks) ? validation.failedChecks : []
+  return Number.isFinite(score)
+    && score >= 90
+    && failedChecks.length > 0
+    && failedChecks.every(name => name === 'toolGrounding')
 }
 
-function canManualApproveValidation(validation) {
-  const score = productionScoreFromValidation(validation)
-  const failedChecks = Array.isArray(validation.failedChecks) ? validation.failedChecks : []
-  return score >= 90
+function shouldPromoteFailedTaskToReview(validationResult) {
+  if (!validationResult) return false
+  if (validationResult.ok || validationResult.passed) return true
+  const score = Number(validationResult.score ?? 0)
+  const failedChecks = Array.isArray(validationResult.failedChecks) ? validationResult.failedChecks : []
+  return Number.isFinite(score)
+    && score >= 90
     && failedChecks.length > 0
     && failedChecks.every(name => name === 'toolGrounding')
 }
@@ -23,7 +29,14 @@ assert.equal(canManualApproveValidation({ score: 100, failedChecks: [] }), false
 assert.equal(canManualApproveValidation({ score: 89, failedChecks: ['toolGrounding'] }), false)
 assert.equal(canManualApproveValidation({ score: 100, failedChecks: ['toolGrounding', 'wordCount'] }), false)
 
+assert.equal(shouldPromoteFailedTaskToReview({ ok: true, passed: true, score: 100, failedChecks: [] }), true)
+assert.equal(shouldPromoteFailedTaskToReview({ ok: false, passed: false, score: 100, failedChecks: ['toolGrounding'] }), true)
+assert.equal(shouldPromoteFailedTaskToReview({ ok: false, passed: false, score: 89, failedChecks: ['toolGrounding'] }), false)
+assert.equal(shouldPromoteFailedTaskToReview({ ok: false, passed: false, score: 100, failedChecks: ['wordCount'] }), false)
+assert.equal(shouldPromoteFailedTaskToReview({ ok: false, passed: false, score: 100, failedChecks: ['toolGrounding', 'wordCount'] }), false)
+
 console.log('manual approve eligibility: ok')
+console.log('revalidate status promotion rules: ok')
 
 const prisma = new PrismaClient()
 try {

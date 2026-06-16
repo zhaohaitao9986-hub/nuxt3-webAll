@@ -858,6 +858,45 @@ function validateFaqQuestions(items, errors) {
   return matches
 }
 
+function normalizeGuideMetaPhrase(value) {
+  return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+function humanizeCategoryHandle(handle) {
+  return String(handle || '')
+    .split(/[-_/]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ')
+}
+
+export function buildGuideMetaAllowedPhrases(sourceData) {
+  const phrases = new Set()
+  const add = (value) => {
+    const normalized = normalizeGuideMetaPhrase(value)
+    if (normalized.length >= 4) phrases.add(normalized)
+  }
+
+  const category = sourceData?.category
+  add(category?.level2?.name)
+  add(category?.level1?.name)
+  add(humanizeCategoryHandle(category?.level2?.handle))
+  add(humanizeCategoryHandle(category?.level1?.handle))
+  add(sourceData?.targetKeyword)
+  add(sourceData?.aiInput?.targetKeyword)
+
+  return [...phrases]
+}
+
+export function isGuideMetaToolNameAllowedByCategory(toolName, allowedPhrases) {
+  const name = normalizeGuideMetaPhrase(toolName)
+  if (!name || name.length < 4) return false
+  return allowedPhrases.some((phrase) => {
+    if (!phrase || phrase.length < 4) return false
+    return phrase.includes(name) || name.includes(phrase)
+  })
+}
+
 function validateAgainstSource(page, sourceData, errors, warnings) {
   const tools = uniqueTools(sourceData)
   const allowedIds = new Set(tools.map(tool => String(tool.id)))
@@ -874,12 +913,14 @@ function validateAgainstSource(page, sourceData, errors, warnings) {
   if (sourceData.sources?.length && !page.sources?.length) errors.push('sources must copy sourceData.sources')
   if (!page.sources?.length) warnings.push(warning('sourceCoverage', 'sources array is empty'))
   if (GUIDE_TYPES.has(page.contentPage?.type)) {
+    const allowedMetaPhrases = buildGuideMetaAllowedPhrases(sourceData)
     for (const field of ['metaTitle', 'metaDescription']) {
       const text = String(page.contentPage?.[field] || '').toLowerCase()
       for (const tool of tools) {
-        if (tool.name && text.includes(String(tool.name).toLowerCase())) {
-          errors.push(`${field} must not name specific tools on guide pages`)
-        }
+        const toolName = String(tool.name || '').toLowerCase()
+        if (!toolName || !text.includes(toolName)) continue
+        if (isGuideMetaToolNameAllowedByCategory(tool.name, allowedMetaPhrases)) continue
+        errors.push(`${field} must not name specific tools on guide pages`)
       }
     }
     const expectedLevel2 = sourceData.category?.level2?.id

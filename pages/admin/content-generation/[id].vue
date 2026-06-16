@@ -203,7 +203,7 @@ async function saveDetail() {
 
 async function prepareBrief() {
   const type = String(detailForm.contentType).toUpperCase()
-  if (['BUYER_GUIDE', 'CATEGORY_GUIDE', 'COMPARISON', 'ALTERNATIVE'].includes(type) && !detailForm.categoryId) {
+  if (['BUYER_GUIDE', 'CATEGORY_GUIDE'].includes(type) && !detailForm.categoryId) {
     ElMessage.warning('请先选择二级分类')
     return
   }
@@ -213,12 +213,15 @@ async function prepareBrief() {
   }
   briefPreparing.value = true
   try {
-    const response = await adminAxios.post(`/api/admin/content-generation/tasks/${taskId.value}/prepare-brief`, {
+    const payload = {
       contentType: detailForm.contentType,
-      categoryId: detailForm.categoryId || null,
       primaryToolId: detailForm.primaryToolId || detailForm.toolId || null,
       secondaryToolId: detailForm.secondaryToolId || null,
-    })
+    }
+    if (type !== 'COMPARISON' && detailForm.categoryId) {
+      payload.categoryId = detailForm.categoryId
+    }
+    const response = await adminAxios.post(`/api/admin/content-generation/tasks/${taskId.value}/prepare-brief`, payload)
     fillContentGenerationDetailForm(detailForm, response.data.task)
     briefSummary.value = response.data.inputSummary
     ElMessage.success('Brief 已根据数据库事实自动生成')
@@ -342,7 +345,7 @@ async function revalidateTask() {
   revalidateLoading.value = true
   try {
     const res = await adminAxios.post(`/api/admin/content-generation/tasks/${taskId.value}/revalidate`)
-    const { passed, score, failedChecks, warnings } = res.data || {}
+    const { passed, score, failedChecks, warnings, statusChanged } = res.data || {}
     await loadDetail()
     const failedText = Array.isArray(failedChecks) && failedChecks.length
       ? `，未通过项：${failedChecks.join('、')}`
@@ -350,7 +353,10 @@ async function revalidateTask() {
     const warningCount = Array.isArray(warnings) ? warnings.length : 0
     const warningText = warningCount ? `，警告 ${warningCount} 条` : ''
     if (passed) {
-      ElMessage.success(`重新校验通过，score=${score}${warningText}`)
+      ElMessage.success(`重新校验通过，score=${score}${warningText}${statusChanged ? '，状态已恢复为待审核' : ''}`)
+    }
+    else if (statusChanged) {
+      ElMessage.success(`重新校验后已恢复为待审核，score=${score}${failedText}${warningText}`)
     }
     else {
       ElMessage.warning(`重新校验未通过，score=${score}${failedText}${warningText}`)
@@ -400,6 +406,41 @@ async function manualApproveTask() {
   }
   finally {
     manualApproveLoading.value = false
+  }
+}
+
+async function copyContent() {
+  const text = detailForm.contentJsonText?.trim()
+  if (!text) {
+    ElMessage.warning('暂无内容可复制')
+    return
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    }
+    else {
+      throw new Error('clipboard unavailable')
+    }
+    ElMessage.success('已复制最终内容')
+  }
+  catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.left = '-9999px'
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      document.execCommand('copy')
+      ElMessage.success('已复制最终内容')
+    }
+    catch {
+      ElMessage.error('复制失败，请手动选择复制')
+    }
+    finally {
+      document.body.removeChild(textarea)
+    }
   }
 }
 
@@ -553,6 +594,12 @@ watch(() => detailForm.contentType, (contentType, previousType) => {
           @click="revalidateTask"
         >
           重新校验
+        </el-button>
+        <el-button
+          :disabled="generationLoading || !detailForm.contentJsonText.trim()"
+          @click="copyContent"
+        >
+          复制内容
         </el-button>
         <el-button
           v-if="detailForm.status === 'review'"

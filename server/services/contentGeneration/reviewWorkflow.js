@@ -5,6 +5,7 @@ import {
   markContentGenerationTaskPublished,
   rejectContentGenerationTask,
   updateContentGenerationTask,
+  updateContentGenerationTaskStatus,
 } from './taskStore'
 import { upsertPublishedContentFromTask } from './publishStore'
 import { buildValidationPayload } from './generator.js'
@@ -98,6 +99,17 @@ export function canManualApproveValidation(validation) {
     && failedChecks.every(name => name === 'toolGrounding')
 }
 
+export function shouldPromoteFailedTaskToReview(validationResult) {
+  if (!validationResult) return false
+  if (validationResult.ok || validationResult.passed) return true
+  const score = Number(validationResult.score ?? 0)
+  const failedChecks = Array.isArray(validationResult.failedChecks) ? validationResult.failedChecks : []
+  return Number.isFinite(score)
+    && score >= 90
+    && failedChecks.length > 0
+    && failedChecks.every(name => name === 'toolGrounding')
+}
+
 export async function revalidateContentGenerationTask(taskId, auth) {
   const task = await getContentGenerationTask(taskId)
   if (!task) {
@@ -151,11 +163,21 @@ export async function revalidateContentGenerationTask(taskId, auth) {
     errorMessage,
   }, auth)
 
+  let status = task.status
+  let statusChanged = false
+  if (task.status === 'failed' && shouldPromoteFailedTaskToReview(validationResult)) {
+    const updated = await updateContentGenerationTaskStatus(taskId, 'review', auth)
+    status = updated.status
+    statusChanged = true
+  }
+
   return {
     passed: Boolean(validationResult.passed),
     score: validationResult.score || 0,
     failedChecks: validationResult.failedChecks || [],
     warnings: validationResult.warnings || [],
+    status,
+    statusChanged,
   }
 }
 

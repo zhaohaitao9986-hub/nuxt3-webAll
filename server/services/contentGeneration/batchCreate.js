@@ -3,6 +3,11 @@ import prisma from '../../utils/prisma.js'
 import { prepareDeterministicBrief } from './briefBuilder.js'
 import { createContentGenerationTask } from './taskStore.js'
 import { slugify, uniqueContentGenerationSlug } from './slugUtils.js'
+import {
+  logCompareCategorySelection,
+  resolveCompareCategorySelection,
+  toolCategoryIncludeForCompare,
+} from './compareCategorySelection.js'
 
 const MAX_BATCH_CREATE = 50
 const ACTIVE_TASK_STATUSES = ['DRAFT', 'PENDING', 'GENERATING', 'REVIEW', 'APPROVED', 'REJECTED', 'PUBLISHED']
@@ -43,7 +48,7 @@ async function findToolByNameOrHandle(value) {
       ],
     },
     orderBy: [{ rank: 'asc' }, { id: 'asc' }],
-    include: { toolCategories: { select: { categoryId: true } } },
+    include: toolCategoryIncludeForCompare,
   })
   if (exact) return exact
 
@@ -56,14 +61,8 @@ async function findToolByNameOrHandle(value) {
       ],
     },
     orderBy: [{ rank: 'asc' }, { id: 'asc' }],
-    include: { toolCategories: { select: { categoryId: true } } },
+    include: toolCategoryIncludeForCompare,
   })
-}
-
-function commonCategoryId(primary, secondary) {
-  const secondaryIds = new Set((secondary.toolCategories || []).map(row => Number(row.categoryId)))
-  const common = (primary.toolCategories || []).find(row => secondaryIds.has(Number(row.categoryId)))
-  return common?.categoryId || null
 }
 
 async function guideAlreadyExists(categoryId) {
@@ -185,12 +184,20 @@ async function createComparison(input, options, auth) {
     })
   }
 
-  const categoryId = commonCategoryId(primary, secondary)
+  const selection = resolveCompareCategorySelection(primary, secondary)
+  logCompareCategorySelection({
+    ...selection,
+    taskCategoryIdBefore: null,
+    source: 'batch-create',
+  })
+  const categoryId = selection.categoryId
   if (!categoryId) return resultItem(input, 'failed', { reason: 'no_shared_category' })
 
   const brief = await prepareDeterministicBrief({
     contentType: 'COMPARISON',
-    categoryId,
+    categoryId: null,
+    categoryIdBefore: null,
+    manualCategoryId: null,
     toolId: primary.id,
     limit: options.limitCount,
     promptJson: {
@@ -198,6 +205,7 @@ async function createComparison(input, options, auth) {
       brief: { secondaryToolId: secondary.id },
     },
   })
+  const resolvedCategoryId = brief.resolvedCategoryId || categoryId
   const enrichedBrief = {
     ...brief,
     primaryToolName: primary.name,
@@ -205,7 +213,7 @@ async function createComparison(input, options, auth) {
   }
   const task = await createPreparedTask({
     contentType: 'COMPARISON',
-    categoryId,
+    categoryId: resolvedCategoryId,
     toolId: primary.id,
     limitCount: options.limitCount,
     generationMode: options.generationMode,

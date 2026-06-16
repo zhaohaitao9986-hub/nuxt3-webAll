@@ -176,6 +176,61 @@ function hasBrief(row) {
   return !!(row?.promptJson?.brief && Object.keys(row.promptJson.brief).length)
 }
 
+function rowContentText(row) {
+  const content = row?.finalContent || row?.final_content || row?.contentJson || row?.content_json || row?.generatedContent
+  if (!content) return ''
+  return typeof content === 'string' ? content : JSON.stringify(content, null, 2)
+}
+
+function rowBriefText(row) {
+  const brief = row?.promptJson?.brief || row?.prompt_json?.brief
+  if (!brief || !Object.keys(brief).length) return ''
+  return JSON.stringify(brief, null, 2)
+}
+
+async function copyTextToClipboard(text, emptyMessage, successMessage) {
+  const trimmed = String(text || '').trim()
+  if (!trimmed) {
+    ElMessage.warning(emptyMessage)
+    return
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(trimmed)
+    }
+    else {
+      throw new Error('clipboard unavailable')
+    }
+    ElMessage.success(successMessage)
+  }
+  catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = trimmed
+    textarea.style.position = 'fixed'
+    textarea.style.left = '-9999px'
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      document.execCommand('copy')
+      ElMessage.success(successMessage)
+    }
+    catch {
+      ElMessage.error('复制失败，请手动选择复制')
+    }
+    finally {
+      document.body.removeChild(textarea)
+    }
+  }
+}
+
+function copyRowContent(row) {
+  copyTextToClipboard(rowContentText(row), '暂无内容可复制', '已复制内容')
+}
+
+function copyRowBrief(row) {
+  copyTextToClipboard(rowBriefText(row), '暂无 Brief 可复制', '已复制 Brief')
+}
+
 function batchCreateStatusLabel(status) {
   const map = {
     created: '已创建',
@@ -365,12 +420,16 @@ async function submitBatchCreate() {
 
 async function prepareBriefForRow(row) {
   try {
-    await adminAxios.post(`/api/admin/content-generation/tasks/${row.id}/prepare-brief`, {
+    const type = String(row.contentType || '').toUpperCase()
+    const payload = {
       contentType: row.contentType,
-      categoryId: row.categoryId || null,
       primaryToolId: row.toolId || row.promptJson?.brief?.primaryToolId || null,
       secondaryToolId: row.promptJson?.brief?.secondaryToolId || null,
-    })
+    }
+    if (type !== 'COMPARISON' && row.categoryId) {
+      payload.categoryId = row.categoryId
+    }
+    await adminAxios.post(`/api/admin/content-generation/tasks/${row.id}/prepare-brief`, payload)
     ElMessage.success('Brief prepared.')
     await loadList()
   }
@@ -617,10 +676,26 @@ watch(() => createForm.contentType, (contentType) => {
             {{ formatDt(row.generatedAt || row.updatedAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="480" fixed="right" align="center">
+        <el-table-column label="操作" width="600" fixed="right" align="center">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">
               详情
+            </el-button>
+            <el-button
+              link
+              type="primary"
+              :disabled="!rowContentText(row)"
+              @click="copyRowContent(row)"
+            >
+              复制内容
+            </el-button>
+            <el-button
+              link
+              type="primary"
+              :disabled="!hasBrief(row)"
+              @click="copyRowBrief(row)"
+            >
+              复制 Brief
             </el-button>
             <el-button link type="primary" @click="prepareBriefForRow(row)">
               生成 Brief

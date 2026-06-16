@@ -2,6 +2,10 @@ import { createError } from 'h3'
 import prisma from '../../utils/prisma.js'
 import { buildContentSourceData } from './sourceBuilder.js'
 import { slugify } from './slugUtils.js'
+import {
+  logCompareCategorySelection,
+  resolveCompareCategorySelection,
+} from './compareCategorySelection.js'
 
 const BASE_CRITERIA = ['Ease of use', 'Output quality', 'Workflow fit', 'Integrations', 'Pricing', 'Support and reliability', 'Team adoption', 'Best-fit use case']
 const CATEGORY_KEYWORD_OPTIONS = {
@@ -63,8 +67,17 @@ function toolSelect() {
     forJobs: true, tags: true, rank: true,
     pricingPlans: { select: { id: true }, take: 1 },
     claims: { where: { status: 'ACTIVE', sourceId: { not: null }, confidence: { gte: 0.7 } }, select: { id: true }, take: 1 },
-    toolCategories: { select: { categoryId: true, category: { select: { id: true, name: true, handle: true } } } },
+    toolCategories: { select: { categoryId: true, category: { select: { id: true, name: true, handle: true, toolCount: true } } } },
   }
+}
+
+async function loadComparisonTool(toolId) {
+  const normalizedToolId = Number(toolId) || null
+  if (!normalizedToolId) return null
+  return prisma.aiTool.findFirst({
+    where: { id: normalizedToolId, toolStatus: { in: ['ONLINE', 'ACTIVE'] } },
+    select: toolSelect(),
+  })
 }
 
 function factScore(tool) {
@@ -311,6 +324,59 @@ export async function prepareDeterministicBrief(task) {
     }
   }
 
+  if (type === 'COMPARISON') {
+    const primaryToolId = task.toolId || task.promptJson?.brief?.primaryToolId
+    const primary = await loadComparisonTool(primaryToolId)
+    if (!primary) throw createError({ statusCode: 400, statusMessage: 'prepareBriefMissingPrimaryTool' })
+
+    const secondaryToolId = task.promptJson?.brief?.secondaryToolId
+    const secondary = secondaryToolId
+      ? await loadComparisonTool(secondaryToolId)
+      : null
+    if (!secondary) throw createError({ statusCode: 422, statusMessage: 'prepareBriefMissingSecondaryTool' })
+    if (Number(primary.id) === Number(secondary.id)) {
+      throw createError({ statusCode: 422, statusMessage: 'prepareBriefDuplicateComparisonTools' })
+    }
+
+    const manualCategoryId = Number(task.manualCategoryId) || null
+    const selection = resolveCompareCategorySelection(primary, secondary, { manualCategoryId })
+    logCompareCategorySelection({
+      ...selection,
+      taskCategoryIdBefore: task.categoryIdBefore ?? task.categoryId ?? null,
+    })
+
+    const resolvedCategoryId = selection.categoryId
+    if (!resolvedCategoryId) {
+      throw createError({ statusCode: 422, statusMessage: 'prepareBriefNoSharedCategory' })
+    }
+
+    const category = await categoryWithTools(resolvedCategoryId)
+    if (!category) throw createError({ statusCode: 422, statusMessage: 'prepareBriefCategoryNotFound' })
+
+    const primaryInCategory = primary.toolCategories.some(row => Number(row.categoryId) === resolvedCategoryId)
+    const secondaryInCategory = secondary.toolCategories.some(row => Number(row.categoryId) === resolvedCategoryId)
+    if (!primaryInCategory || !secondaryInCategory) {
+      throw createError({ statusCode: 422, statusMessage: 'prepareBriefToolsOutsideResolvedCategory' })
+    }
+
+    const dimensions = criteria(category, 8)
+    const sharedUseCases = unique((primary.useCases || []).filter(value => (secondary.useCases || []).map(item => item.toLowerCase()).includes(value.toLowerCase())), 6)
+    return {
+      title: comparisonTitle(primary, secondary),
+      slug: comparisonSlug(primary, secondary),
+      primaryToolId: primary.id,
+      secondaryToolId: secondary.id,
+      comparisonIntent: `Help readers choose between ${primary.name} and ${secondary.name} for overlapping ${category?.name || 'AI'} workflows.`,
+      targetAudience: `${categoryAudience(category)} comparing a two-tool shortlist`,
+      decisionCriteria: dimensions.slice(0, 8),
+      sharedUseCases: sharedUseCases.length ? sharedUseCases : unique([useCase(primary, category), useCase(secondary, category), category?.name], 3),
+      featureComparisonFacts: featureFacts([primary, secondary], dimensions),
+      pricingComparisonFacts: pricingFacts([primary, secondary]),
+      resolvedCategoryId,
+      categorySelection: selection,
+    }
+  }
+
   const context = await primaryContext(task.toolId || task.promptJson?.brief?.primaryToolId, task.categoryId)
   if (!context) throw createError({ statusCode: 400, statusMessage: 'prepareBriefMissingPrimaryTool' })
   const { tool: primary, category } = context
@@ -336,27 +402,6 @@ export async function prepareDeterministicBrief(task) {
       commonMistakes: ['Starting without measurable success criteria', 'Using unsupported assumptions instead of verified tool capabilities', 'Skipping final review'],
       outputChecklist: ['The result matches the original goal', 'Required inputs were used', 'The output was reviewed for accuracy', 'Weak sections were refined', 'The final artifact was exported or saved'],
       relatedToolIds: related.map(tool => tool.id),
-    }
-  }
-
-  if (type === 'COMPARISON') {
-    const secondaryToolId = task.promptJson?.brief?.secondaryToolId
-    const secondary = secondaryToolId
-      ? await explicitComparisonTool(secondaryToolId, task.categoryId, primary.id)
-      : diversifiedTools(candidates, 1, [primary.id])[0]
-    if (!secondary) throw createError({ statusCode: 422, statusMessage: 'prepareBriefMissingSecondaryTool' })
-    const dimensions = criteria(category, 8)
-    const sharedUseCases = unique((primary.useCases || []).filter(value => (secondary.useCases || []).map(item => item.toLowerCase()).includes(value.toLowerCase())), 6)
-    return {
-      title: comparisonTitle(primary, secondary),
-      slug: comparisonSlug(primary, secondary),
-      primaryToolId: primary.id, secondaryToolId: secondary.id,
-      comparisonIntent: `Help readers choose between ${primary.name} and ${secondary.name} for overlapping ${category?.name || 'AI'} workflows.`,
-      targetAudience: `${categoryAudience(category)} comparing a two-tool shortlist`,
-      decisionCriteria: dimensions.slice(0, 8),
-      sharedUseCases: sharedUseCases.length ? sharedUseCases : unique([useCase(primary, category), useCase(secondary, category), category?.name], 3),
-      featureComparisonFacts: featureFacts([primary, secondary], dimensions),
-      pricingComparisonFacts: pricingFacts([primary, secondary]),
     }
   }
 
