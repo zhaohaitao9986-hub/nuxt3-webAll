@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { validateGeneratedContentPage, validateSourceData } from '../server/services/contentGeneration/validators.js'
 import { PRODUCTION_LIMITS } from '../server/services/contentGeneration/editorialRules.js'
 import { enforceInputContract } from '../server/services/contentGeneration/inputContracts.js'
+import { resolveCompareCriteriaTemplate } from '../server/services/contentGeneration/compareCriteriaTemplates.js'
 import { applyPromptTemplate } from '../server/services/contentGeneration/prompts.js'
 import { buildSourceMap, compactToolFacts } from '../server/services/contentGeneration/sourceSelectors.js'
 import { promptJsonWithBrief } from '../server/services/contentGeneration/taskStore.js'
@@ -271,23 +272,94 @@ structuralBestFor.bodyJson.blocks[5].heading = 'Secondary Buyer Fit'
 const structuralBestForValidation = validateGeneratedContentPage(structuralBestFor, compareSource)
 assert.equal(structuralBestForValidation.checks.requiredTopics.passed, true, structuralBestForValidation.errors.join('\n'))
 
+const pricingAndPlansHeading = structuredClone(compare)
+pricingAndPlansHeading.bodyJson.blocks[6].heading = 'Pricing and Plans'
+const pricingAndPlansHeadingValidation = validateGeneratedContentPage(pricingAndPlansHeading, compareSource)
+assert.equal(pricingAndPlansHeadingValidation.checks.requiredTopics.passed, true, pricingAndPlansHeadingValidation.errors.join('\n'))
+assert.equal(pricingAndPlansHeadingValidation.checks.hasUseCases.passed, true)
+
+const pricingFactsOnly = structuredClone(compare)
+pricingFactsOnly.bodyJson.blocks[6].heading = 'Subscription Details'
+const pricingFactsOnlySource = {
+  ...compareSource,
+  aiInput: {
+    pricingComparisonFacts: [{ toolId: 1 }, { toolId: 2 }],
+  },
+}
+const pricingFactsOnlyValidation = validateGeneratedContentPage(pricingFactsOnly, pricingFactsOnlySource)
+assert.equal(pricingFactsOnlyValidation.checks.requiredTopics.passed, true, pricingFactsOnlyValidation.errors.join('\n'))
+
+const missingUseCasesTopic = structuredClone(compare)
+missingUseCasesTopic.bodyJson.blocks = missingUseCasesTopic.bodyJson.blocks.filter(block => block.type !== 'scenarios')
+missingUseCasesTopic.bodyJson.blocks[8].heading = 'Buyer Fit Examples'
+const missingUseCasesTopicValidation = validateGeneratedContentPage(missingUseCasesTopic, compareSource)
+assert.equal(missingUseCasesTopicValidation.ok, false)
+assert.equal(missingUseCasesTopicValidation.failedChecks.includes('requiredTopics'), true)
+assert.equal(missingUseCasesTopicValidation.checks.requiredTopics.actual.missing.includes('useCases'), true)
+
+const missingPricingTopic = structuredClone(compare)
+missingPricingTopic.bodyJson.blocks[6].heading = 'Subscription Details'
+const missingPricingTopicValidation = validateGeneratedContentPage(missingPricingTopic, compareSource)
+assert.equal(missingPricingTopicValidation.ok, false)
+assert.equal(missingPricingTopicValidation.failedChecks.includes('requiredTopics'), true)
+assert.equal(missingPricingTopicValidation.checks.requiredTopics.actual.missing.includes('pricingComparison'), true)
+
 const shortCompareSection = structuredClone(compare)
 shortCompareSection.bodyJson.blocks[0].html = `<p>${exactWords(100)}</p>`
 const shortCompareSectionValidation = validateGeneratedContentPage(shortCompareSection, compareSource)
 assert.equal(shortCompareSectionValidation.ok, true, shortCompareSectionValidation.errors.join('\n'))
 assert.equal(shortCompareSectionValidation.checks.minSectionWordCount.severity, 'warning')
+assert.equal(shortCompareSectionValidation.failedChecks.includes('minSectionWordCount'), false)
+assert.equal(shortCompareSectionValidation.warningChecks.includes('minSectionWordCount'), true)
+assert.equal(shortCompareSectionValidation.errors.some(message => message.includes('minSectionWordCount')), false)
+
+const warningOnlyCompare = structuredClone(compare)
+warningOnlyCompare.contentPage.metaDescription = 'A'.repeat(190)
+warningOnlyCompare.bodyJson.blocks[0].html = `<p>${exactWords(100)}</p>`
+const warningOnlyCompareValidation = validateGeneratedContentPage(warningOnlyCompare, compareSource)
+assert.equal(warningOnlyCompareValidation.ok, true, warningOnlyCompareValidation.errors.join('\n'))
+assert.equal(warningOnlyCompareValidation.passed, true)
+assert.deepEqual(warningOnlyCompareValidation.failedChecks, [])
+assert.deepEqual(warningOnlyCompareValidation.errors, [])
+assert.equal(warningOnlyCompareValidation.warningChecks.includes('minSectionWordCount'), true)
+assert.equal(warningOnlyCompareValidation.warningChecks.includes('metaDescriptionValid'), true)
 
 const longCompareSection = structuredClone(compare)
 longCompareSection.bodyJson.blocks[0].html = `<p>${exactWords(221)}</p>`
 const longCompareSectionValidation = validateGeneratedContentPage(longCompareSection, compareSource)
-assert.equal(longCompareSectionValidation.ok, false)
+assert.equal(longCompareSectionValidation.ok, true, longCompareSectionValidation.errors.join('\n'))
 assert.equal(longCompareSectionValidation.checks.minSectionWordCount.passed, false)
+assert.equal(longCompareSectionValidation.checks.minSectionWordCount.severity, 'warning')
+assert.equal(longCompareSectionValidation.warningChecks.includes('minSectionWordCount'), true)
+
+const tooLongCompareSection = structuredClone(compare)
+tooLongCompareSection.bodyJson.blocks[0].html = `<p>${exactWords(241)}</p>`
+const tooLongCompareSectionValidation = validateGeneratedContentPage(tooLongCompareSection, compareSource)
+assert.equal(tooLongCompareSectionValidation.ok, true, tooLongCompareSectionValidation.errors.join('\n'))
+assert.equal(tooLongCompareSectionValidation.checks.minSectionWordCount.severity, 'warning')
+assert.equal(tooLongCompareSectionValidation.failedChecks.includes('minSectionWordCount'), false)
+assert.equal(tooLongCompareSectionValidation.warningChecks.includes('minSectionWordCount'), true)
 
 const longCompareFaq = structuredClone(compare)
 longCompareFaq.bodyJson.blocks.find(block => block.type === 'faq').items[0].answer = exactWords(101)
 const longCompareFaqValidation = validateGeneratedContentPage(longCompareFaq, compareSource)
-assert.equal(longCompareFaqValidation.ok, false)
+assert.equal(longCompareFaqValidation.ok, true, longCompareFaqValidation.errors.join('\n'))
 assert.equal(longCompareFaqValidation.checks.minFaqAnswerWordCount.passed, false)
+assert.equal(longCompareFaqValidation.checks.minFaqAnswerWordCount.severity, 'warning')
+assert.equal(longCompareFaqValidation.failedChecks.includes('minFaqAnswerWordCount'), false)
+assert.equal(longCompareFaqValidation.warningChecks.includes('minFaqAnswerWordCount'), true)
+
+const tooLongCompareFaq = structuredClone(compare)
+tooLongCompareFaq.bodyJson.blocks.find(block => block.type === 'faq').items[0].answer = exactWords(121)
+const tooLongCompareFaqValidation = validateGeneratedContentPage(tooLongCompareFaq, compareSource)
+assert.equal(tooLongCompareFaqValidation.ok, false)
+assert.equal(tooLongCompareFaqValidation.failedChecks.includes('minFaqAnswerWordCount'), true)
+
+const tooShortCompareFaq = structuredClone(compare)
+tooShortCompareFaq.bodyJson.blocks.find(block => block.type === 'faq').items[0].answer = exactWords(49)
+const tooShortCompareFaqValidation = validateGeneratedContentPage(tooShortCompareFaq, compareSource)
+assert.equal(tooShortCompareFaqValidation.ok, false)
+assert.equal(tooShortCompareFaqValidation.failedChecks.includes('minFaqAnswerWordCount'), true)
 
 const thinGuide = structuredClone(guide)
 thinGuide.bodyJson.blocks = thinGuide.bodyJson.blocks.slice(0, 6)
@@ -307,24 +379,29 @@ buyerLimits.bodyJson.blocks.find(block => block.type === 'tool_callout').verdict
 buyerLimits.bodyJson.blocks.find(block => block.type === 'section').html = `<p>${exactWords(171)}</p>`
 buyerLimits.bodyJson.blocks.find(block => block.type === 'faq').items[0].answer = exactWords(86)
 const buyerLimitsValidation = validateGeneratedContentPage(buyerLimits, guideSource)
-assert.equal(buyerLimitsValidation.ok, false)
+assert.equal(buyerLimitsValidation.ok, true, buyerLimitsValidation.errors.join('\n'))
 assert.equal(buyerLimitsValidation.checks.minRecommendedToolWordCount.passed, false)
-assert.equal(buyerLimitsValidation.checks.minSectionWordCount.passed, false)
-assert.equal(buyerLimitsValidation.checks.minFaqAnswerWordCount.passed, false)
+assert.equal(buyerLimitsValidation.checks.minRecommendedToolWordCount.severity, 'warning')
+assert.equal(buyerLimitsValidation.checks.minSectionWordCount.passed, true)
+assert.equal(buyerLimitsValidation.checks.minFaqAnswerWordCount.passed, true)
 
 const buyerToolCalloutPassRange = structuredClone(guide)
 for (const block of buyerToolCalloutPassRange.bodyJson.blocks.filter(row => row.type === 'tool_callout')) {
   block.verdict = exactWords(104)
 }
 const buyerToolCalloutPassRangeValidation = validateGeneratedContentPage(buyerToolCalloutPassRange, guideSource)
-assert.equal(buyerToolCalloutPassRangeValidation.checks.minRecommendedToolWordCount.passed, true)
+assert.equal(buyerToolCalloutPassRangeValidation.ok, true, buyerToolCalloutPassRangeValidation.errors.join('\n'))
+assert.equal(buyerToolCalloutPassRangeValidation.checks.minRecommendedToolWordCount.passed, false)
+assert.equal(buyerToolCalloutPassRangeValidation.checks.minRecommendedToolWordCount.severity, 'warning')
 
 const buyerToolCalloutMixedPassRange = structuredClone(guide)
 const buyerToolCallouts = buyerToolCalloutMixedPassRange.bodyJson.blocks.filter(row => row.type === 'tool_callout')
 buyerToolCallouts[0].verdict = exactWords(104)
 buyerToolCallouts[1].verdict = exactWords(117)
 const buyerToolCalloutMixedPassRangeValidation = validateGeneratedContentPage(buyerToolCalloutMixedPassRange, guideSource)
-assert.equal(buyerToolCalloutMixedPassRangeValidation.checks.minRecommendedToolWordCount.passed, true)
+assert.equal(buyerToolCalloutMixedPassRangeValidation.ok, true, buyerToolCalloutMixedPassRangeValidation.errors.join('\n'))
+assert.equal(buyerToolCalloutMixedPassRangeValidation.checks.minRecommendedToolWordCount.passed, false)
+assert.equal(buyerToolCalloutMixedPassRangeValidation.checks.minRecommendedToolWordCount.severity, 'warning')
 
 const absoluteClaims = structuredClone(guide)
 absoluteClaims.bodyJson.blocks[0].items.push('This is the best ever, fully autonomous choice with no editing needed.')
@@ -509,6 +586,26 @@ const comparisonInput = enforceInputContract('COMPARISON', {
   internalLinks: [{ path: '/tool/tool-1', anchor: 'Tool 1' }],
 })
 assert.equal(comparisonInput.validation.passed, true)
+
+const imageTemplate = resolveCompareCriteriaTemplate({
+  selectedCategory: { handle: 'ai-image-generator', name: 'AI Image Generator' },
+  commonCategories: [{ handle: 'ai-art-generator', name: 'AI Art Generator' }],
+}, { title: 'Midjourney vs Leonardo.Ai', slug: 'midjourney-vs-leonardo-ai' })
+assert.equal(imageTemplate.key, 'AI_IMAGE_GENERATOR')
+assert.deepEqual(imageTemplate.criteria, ['Image Quality', 'Prompt Accuracy', 'Style Consistency', 'Editing Tools', 'Generation Speed', 'Commercial Usage', 'Pricing', 'Ease of Use'])
+
+const writingTemplate = resolveCompareCriteriaTemplate({
+  selectedCategory: { handle: 'ai-writing-assistants', name: 'AI Writing Assistants' },
+}, { title: 'Grammarly vs QuillBot', slug: 'grammarly-vs-quillbot' })
+assert.equal(writingTemplate.key, 'AI_WRITING')
+assert.deepEqual(writingTemplate.criteria, ['Writing Quality', 'Long-form Content Support', 'Templates', 'Grammar and Style Accuracy', 'Integrations', 'Collaboration', 'Pricing', 'Ease of Use'])
+
+const fallbackTemplate = resolveCompareCriteriaTemplate({
+  selectedCategory: { handle: 'misc-tools', name: 'Miscellaneous Tools' },
+}, { title: 'Tool A vs Tool B', slug: 'tool-a-vs-tool-b' })
+assert.equal(fallbackTemplate.key, 'GENERAL_AI_TOOL')
+assert.equal(fallbackTemplate.fallbackUsed, true)
+assert.deepEqual(fallbackTemplate.criteria, ['Output Quality', 'Ease of Use', 'Feature Depth', 'Integrations', 'Customization', 'Pricing', 'Collaboration', 'Best-fit Use Cases'])
 
 const missingSecondary = enforceInputContract('COMPARISON', { ...comparisonInput.input, secondaryTool: null })
 assert.equal(missingSecondary.validation.passed, false)

@@ -75,6 +75,10 @@ function check(passed, actual, expected, options = {}) {
   }
 }
 
+function warningCheck(actual, expected, options = {}) {
+  return check(false, actual, expected, { ...options, severity: 'warning' })
+}
+
 function warning(rule, message, extra = {}) {
   return {
     type: 'warning',
@@ -458,6 +462,10 @@ export function validateGeneratedContentPage(page, sourceData = null) {
   }))
   const headingsText = blocks.map(block => `${block?.heading || ''} ${block?.title || ''} ${block?.type || ''}`).join('\n')
   const fullBodyText = `${headingsText}\n${editorialText}`
+  const hasScenariosBlock = blocks.some(block => block?.type === 'scenarios')
+  const hasUseCaseHeading = blocks.some(block => /use cases|typical use cases|scenarios/i.test(`${block?.heading || ''} ${block?.title || ''}`))
+  const hasPricingHeading = blocks.some(block => /pricing comparison|pricing and plans|\bpricing\b|\bcost\b|\bplans\b/i.test(`${block?.heading || ''} ${block?.title || ''}`))
+  const hasPricingComparisonFacts = Boolean(sourceData?.aiInput?.pricingComparisonFacts?.length)
   const topics = isCompare
     ? COMPARE_REQUIRED_TOPICS
     : pageType === 'CATEGORY_GUIDE'
@@ -469,8 +477,12 @@ export function validateGeneratedContentPage(page, sourceData = null) {
     keyCriteria: blocks.some(block => block?.type === 'framework' && (block.criteria?.length || 0) > 0),
     recommendedTools: toolCallouts.length >= (limits.minRecommendedTools || 1),
     decisionGuidance: blocks.some(block => block?.type === 'decision_tree' && (block.branches?.length || 0) > 0),
+    featureMatrix: isCompare && matrixRows.length > 0,
+    criteriaAnalysis: isCompare && criteria.length > 0,
     bestForPrimary: isCompare && hasCompareBestForCoverage(page, sourceData, fullBodyText, 'primary'),
     bestForSecondary: isCompare && hasCompareBestForCoverage(page, sourceData, fullBodyText, 'secondary'),
+    pricingComparison: isCompare && (hasPricingHeading || hasPricingComparisonFacts),
+    useCases: isCompare && (hasScenariosBlock || hasUseCaseHeading),
   }
   const missingTopics = topics
     .filter(topic => !topic.pattern.test(fullBodyText) && !semanticTopicCoverage[topic.key])
@@ -478,7 +490,7 @@ export function validateGeneratedContentPage(page, sourceData = null) {
   const hasMethodology = blocks.some(block => block?.type === 'methodology' && countEnglishWords(block.text || '') >= 40)
   const hasPricingContext = /pricing|paid tier|free tier|trial|billing|plan|official pricing|verify current pricing/i.test(fullBodyText)
   const hasDecisionGuidance = /decision|choose|right fit|suitable for|recommendation|bottom line/i.test(fullBodyText)
-  const hasUseCases = /use case|scenario|workflow|when to use/i.test(fullBodyText)
+  const hasUseCases = /use case|scenario|workflow|when to use/i.test(fullBodyText) || hasScenariosBlock || hasUseCaseHeading
   const sourceTypes = [...(sourceData?.sources || []), ...(page.sources || [])].map(source => String(source?.sourceType || ''))
   const hasOfficialOrInternalSources = sourceTypes.some(type => /OFFICIAL|INTERNAL/i.test(type))
   const sourceConsistency = sourceData
@@ -487,67 +499,77 @@ export function validateGeneratedContentPage(page, sourceData = null) {
 
   const schemaErrorCount = errors.length
   checks.schemaValid = check(schemaErrorCount === 0, schemaErrorCount, 0, { expandable: false })
+  if (sourceData?.inputValidation) {
+    checks.contractPassed = check(
+      Boolean(sourceData.inputValidation.passed),
+      sourceData.inputValidation.missingRequiredFields || [],
+      true,
+      { expandable: false },
+    )
+  }
   checks.wordCount = check(wordCount >= limits.minWords && wordCount <= limits.maxWords, wordCount, `${limits.minWords}-${limits.maxWords}`)
   checks.blockCount = check(blocks.length >= limits.minBlocks && blocks.length <= limits.maxBlocks, blocks.length, `${limits.minBlocks}-${limits.maxBlocks}`)
   checks.faqCount = check(faqItems.length >= limits.minFaqItems, faqItems.length, `>= ${limits.minFaqItems}`)
-  checks.minSectionWordCount = buildLengthRangeCheck({
-    rows: sectionWordCounts,
-    minimumCount: 1,
-    allowedMin: isCompare ? limits.minSectionWords : undefined,
-    recommendedMin: isCompare ? limits.recommendedMinSectionWords : limits.minSectionWords,
-    recommendedMax: limits.maxSectionWords,
-    allowedMax: pageType === 'BUYER_GUIDE' ? 220 : limits.maxSectionWords,
-    rule: 'sectionWordCount',
-    label: 'Section',
-    warnings,
-  })
+  checks.minSectionWordCount = {
+    ...buildLengthRangeCheck({
+      rows: sectionWordCounts,
+      minimumCount: 1,
+      allowedMin: 90,
+      recommendedMin: 120,
+      recommendedMax: 220,
+      allowedMax: 240,
+      rule: 'sectionWordCount',
+      label: 'Section',
+      warnings,
+    }),
+    severity: 'warning',
+  }
   checks.minFaqAnswerWordCount = buildLengthRangeCheck({
     rows: faqAnswerWordCounts,
     minimumCount: limits.minFaqItems,
-    recommendedMin: limits.minFaqAnswerWords,
-    recommendedMax: limits.maxFaqAnswerWords,
-    allowedMax: pageType === 'BUYER_GUIDE' ? 125 : limits.maxFaqAnswerWords,
+    allowedMin: 50,
+    recommendedMin: 60,
+    recommendedMax: 100,
+    allowedMax: 120,
     rule: 'faqAnswerWordCount',
     label: 'FAQ answer',
     warnings,
   })
   if (pageType === 'BUYER_GUIDE' || isCompare) checks.hasPricingContext = check(hasPricingContext, hasPricingContext, true)
   checks.hasDecisionGuidance = check(hasDecisionGuidance && !missingTopics.includes('decisionGuidance'), hasDecisionGuidance, true)
-  checks.hasUseCases = check(hasUseCases && !missingTopics.includes('useCases'), hasUseCases, true)
+  checks.hasUseCases = check(hasUseCases, hasUseCases, true)
   checks.hasMethodology = check(hasMethodology, hasMethodology, true)
   checks.hasOfficialOrInternalSources = check(hasOfficialOrInternalSources, hasOfficialOrInternalSources, true, { expandable: false })
-  checks.seoTitleValid = check(
-    isNonEmptyString(meta?.metaTitle) && meta.metaTitle.length <= META_LIMITS.metaTitleMax,
-    meta?.metaTitle?.length || 0,
-    `1-${META_LIMITS.metaTitleMax} chars`,
-    { expandable: false },
-  )
-  checks.metaDescriptionValid = check(
-    isNonEmptyString(meta?.metaDescription) && meta.metaDescription.length <= META_LIMITS.metaDescriptionMax,
-    meta?.metaDescription?.length || 0,
-    `1-${META_LIMITS.metaDescriptionMax} chars`,
-    { expandable: false },
-  )
+  checks.seoTitleValid = buildTextLengthCheck({
+    value: meta?.metaTitle,
+    recommendedMax: META_LIMITS.metaTitleMax,
+    allowedMax: 80,
+    field: 'metaTitle',
+    warnings,
+  })
+  checks.metaDescriptionValid = buildTextLengthCheck({
+    value: meta?.metaDescription,
+    recommendedMax: META_LIMITS.metaDescriptionMax,
+    allowedMax: 220,
+    field: 'metaDescription',
+    warnings,
+  })
   checks.requiredTopics = check(missingTopics.length === 0, { missing: missingTopics }, 'all required topics')
 
   if (pageType === 'BUYER_GUIDE') {
     checks.recommendedToolsCount = check(recommendedHandles.size === limits.minRecommendedTools, recommendedHandles.size, `= ${limits.minRecommendedTools}`)
     checks.toolCalloutCount = check(toolCallouts.length === limits.minRecommendedTools, toolCallouts.length, `= ${limits.minRecommendedTools}`)
-    checks.minRecommendedToolWordCount = check(
-      toolNoteWordCounts.length >= limits.minRecommendedTools && toolNoteWordCounts.every(row => {
-        const minWords = limits.minToolNoteWordsPass ?? limits.minToolNoteWords
-        const maxWords = limits.maxToolNoteWordsPass ?? limits.maxToolNoteWords
-        return row.words >= minWords && (!maxWords || row.words <= maxWords)
-      }),
-      toolNoteWordCounts,
-      (() => {
-        const minWords = limits.minToolNoteWordsPass ?? limits.minToolNoteWords
-        const maxWords = limits.maxToolNoteWordsPass ?? limits.maxToolNoteWords
-        return maxWords
-          ? `at least ${limits.minRecommendedTools} notes; each ${minWords}-${maxWords} words`
-          : `at least ${limits.minRecommendedTools} notes; each >= ${minWords} words`
-      })(),
-    )
+    checks.minRecommendedToolWordCount = buildLengthRangeCheck({
+      rows: toolNoteWordCounts,
+      minimumCount: limits.minRecommendedTools,
+      allowedMin: 90,
+      recommendedMin: limits.minToolNoteWords,
+      recommendedMax: limits.maxToolNoteWords,
+      allowedMax: 160,
+      rule: 'recommendedToolWordCount',
+      label: 'Tool recommendation',
+      warnings,
+    })
     checks.criteriaCount = check(extractGuideCriteria(blocks).length >= limits.minCriteria, extractGuideCriteria(blocks).length, `>= ${limits.minCriteria}`)
     checks.sourceCount = check(
       sourceConsistency.sourceCount >= recommendedHandles.size,
@@ -569,13 +591,13 @@ export function validateGeneratedContentPage(page, sourceData = null) {
     }
     checks.criteriaCount = check(criteria.length >= limits.minCriteria, criteria.length, `>= ${limits.minCriteria}`)
     const verdictWords = countEnglishWords(page.comparisonPage?.verdict || page.alternativePage?.reasonToSwitch || '')
-    checks.verdictSpecific = check(verdictWords >= limits.minVerdictWords, verdictWords, `>= ${limits.minVerdictWords} words`)
-  }
-
-  for (const [name, row] of Object.entries(checks)) {
-    if (!row.passed && row.severity !== 'warning') {
-      errors.push(`${name} failed: expected ${formatValue(row.expected)}, got ${formatValue(row.actual)}`)
-    }
+    checks.verdictSpecific = buildMinimumWordCheck({
+      words: verdictWords,
+      recommendedMin: limits.minVerdictWords,
+      allowedMin: Math.max(1, limits.minVerdictWords - 10),
+      field: 'verdict',
+      warnings,
+    })
   }
 
   const requiredBlockTypes = isCompare
@@ -593,15 +615,18 @@ export function validateGeneratedContentPage(page, sourceData = null) {
 
   const score = calculateScore(checks, isCompare ? 'compare' : 'guide')
   checks.productionScore = check(score >= 85, score, '>= 85')
-  if (!checks.productionScore.passed) errors.push(`productionScore failed: expected >= 85, got ${score}`)
-  const failedChecks = Object.entries(checks)
-    .filter(([, row]) => !row.passed && row.severity !== 'warning')
-    .map(([name]) => name)
-  const warningChecks = Object.entries(checks)
+  const failedCheckEntries = Object.entries(checks)
+    .filter(([, row]) => !row.passed && row.severity === 'error')
+  const warningCheckEntries = Object.entries(checks)
     .filter(([, row]) => !row.passed && row.severity === 'warning')
+  const failedChecks = failedCheckEntries.map(([name]) => name)
+  const warningChecks = warningCheckEntries
     .map(([name]) => name)
+  const checkErrors = failedCheckEntries
+    .map(([name, row]) => `${name} failed: expected ${formatValue(row.expected)}, got ${formatValue(row.actual)}`)
+  const hardErrors = [...errors, ...checkErrors]
 
-  return result(errors, warnings, {
+  return result(hardErrors, warnings, {
     checks,
     score,
     failedChecks,
@@ -787,7 +812,7 @@ function buildLengthRangeCheck({
       heading: row.heading || undefined,
       actual: row.words,
       recommendedRange: `${recommendedMin}-${recommendedMax}`,
-      allowedRange: `${recommendedMin}-${hardMaximum}`,
+      allowedRange: `${hardMinimum}-${hardMaximum}`,
     }))
   }
   for (const row of softUnderages) {
@@ -805,8 +830,37 @@ function buildLengthRangeCheck({
     : `every ${label.toLowerCase()} >= ${hardMinimum} words`
 
   if (!hasEnoughRows || hardFailures.length) return check(false, rows, expected)
-  if (softOverages.length || softUnderages.length) return check(false, rows, expected, { severity: 'warning' })
+  if (softOverages.length || softUnderages.length) return warningCheck(rows, expected)
   return check(true, rows, expected)
+}
+
+function buildTextLengthCheck({ value, recommendedMax, allowedMax, field, warnings }) {
+  const length = typeof value === 'string' ? value.length : 0
+  const expected = `1-${recommendedMax} chars recommended; <= ${allowedMax} accepted`
+  if (!isNonEmptyString(value) || length > allowedMax) return check(false, length, expected, { expandable: false })
+  if (length > recommendedMax) {
+    warnings.push(warning(`${field}Length`, `${field} exceeds recommended length (${length} chars)`, {
+      actual: length,
+      recommendedMax,
+      allowedMax,
+    }))
+    return warningCheck(length, expected, { expandable: false })
+  }
+  return check(true, length, expected, { expandable: false })
+}
+
+function buildMinimumWordCheck({ words, recommendedMin, allowedMin, field, warnings }) {
+  const expected = `>= ${recommendedMin} words recommended; >= ${allowedMin} accepted`
+  if (words < allowedMin) return check(false, words, expected)
+  if (words < recommendedMin) {
+    warnings.push(warning(`${field}WordCount`, `${field} is below the recommended length (${words} words)`, {
+      actual: words,
+      recommendedMin,
+      allowedMin,
+    }))
+    return warningCheck(words, expected)
+  }
+  return check(true, words, expected)
 }
 
 function validateRequiredBlockTypes(blocks, requiredTypes, errors) {

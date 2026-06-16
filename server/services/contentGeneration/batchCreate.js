@@ -1,8 +1,10 @@
 import { createError } from 'h3'
 import prisma from '../../utils/prisma.js'
 import { prepareDeterministicBrief } from './briefBuilder.js'
-import { createContentGenerationTask } from './taskStore.js'
+import { buildContentSourceData } from './sourceBuilder.js'
+import { createContentGenerationTask, updateContentGenerationTask } from './taskStore.js'
 import { slugify, uniqueContentGenerationSlug } from './slugUtils.js'
+import { validateSourceData } from './validators.js'
 import {
   logCompareCategorySelection,
   resolveCompareCategorySelection,
@@ -22,6 +24,19 @@ function linesFromInput(value) {
 
 function resultItem(input, status, extra = {}) {
   return { input, status, taskId: null, title: '', slug: '', reason: '', ...extra }
+}
+
+function inputSummaryFor(sourceData, validation) {
+  return {
+    inputContractType: validation.inputContract?.inputContractType || sourceData?.contentType || null,
+    selectedTools: validation.inputContract?.selectedTools || [],
+    sourceMapCount: validation.inputContract?.sourceMapCount || 0,
+    selectedToolStrategy: sourceData?.selectedToolStrategy || null,
+    missingRequiredFields: validation.inputContract?.missingRequiredFields || [],
+    inputWarnings: validation.inputContract?.inputWarnings || [],
+    contractPassed: Boolean(validation.ok && validation.inputContract?.passed),
+    briefSource: 'content_generation_tasks.prompt_json.brief',
+  }
 }
 
 function parseToolPair(input) {
@@ -121,6 +136,59 @@ async function createPreparedTask({ contentType, categoryId, toolId, limitCount,
   }, auth)
 }
 
+async function validateAndSavePreparedTask(task, auth) {
+  try {
+    const sourceData = await buildContentSourceData({ ...task, contentType: task.contentType.toUpperCase() })
+    const validation = validateSourceData(sourceData)
+    const inputSummary = inputSummaryFor(sourceData, validation)
+    const updated = await updateContentGenerationTask(task.id, {
+      sourceDataJson: sourceData,
+      validationJson: validation,
+      promptJson: {
+        ...(task.promptJson || {}),
+        inputSummary,
+      },
+    }, auth)
+    return { task: updated, sourceData, validation, inputSummary }
+  }
+  catch (error) {
+    const message = error?.statusMessage || error?.message || String(error)
+    const validation = {
+      ok: false,
+      passed: false,
+      errors: [message],
+      warnings: [],
+      inputContract: {
+        inputContractType: task.contentType || null,
+        selectedTools: [],
+        missingRequiredFields: ['sourceDataJson'],
+        sourceMapCount: 0,
+        inputWarnings: [],
+        passed: false,
+      },
+    }
+    const inputSummary = {
+      inputContractType: task.contentType || null,
+      selectedTools: [],
+      sourceMapCount: 0,
+      selectedToolStrategy: null,
+      missingRequiredFields: ['sourceDataJson'],
+      inputWarnings: [],
+      contractPassed: false,
+      briefSource: 'content_generation_tasks.prompt_json.brief',
+    }
+    const updated = await updateContentGenerationTask(task.id, {
+      validationJson: validation,
+      promptJson: {
+        ...(task.promptJson || {}),
+        inputSummary,
+      },
+      errorMessage: message,
+    }, auth)
+    return { task: updated, sourceData: null, validation, inputSummary }
+  }
+}
+
 async function createGuide(input, options, auth) {
   const category = await prisma.categoryLevel2.findFirst({
     where: { handle: input },
@@ -153,11 +221,16 @@ async function createGuide(input, options, auth) {
     brief,
     auth,
   })
+  const prepared = await validateAndSavePreparedTask(task, auth)
   return resultItem(input, 'created', {
-    taskId: task.id,
-    title: task.title,
-    slug: task.slug,
-    reason: 'created_and_brief_prepared',
+    taskId: prepared.task.id,
+    title: prepared.task.title,
+    slug: prepared.task.slug,
+    reason: prepared.inputSummary.contractPassed ? 'created_and_brief_prepared' : 'created_and_brief_contract_failed',
+    contractPassed: prepared.inputSummary.contractPassed,
+    missingRequiredFields: prepared.inputSummary.missingRequiredFields,
+    selectedTools: prepared.inputSummary.selectedTools,
+    sourceMapCount: prepared.inputSummary.sourceMapCount,
   })
 }
 
@@ -220,11 +293,16 @@ async function createComparison(input, options, auth) {
     brief: enrichedBrief,
     auth,
   })
+  const prepared = await validateAndSavePreparedTask(task, auth)
   return resultItem(input, 'created', {
-    taskId: task.id,
-    title: task.title,
-    slug: task.slug,
-    reason: 'created_and_brief_prepared',
+    taskId: prepared.task.id,
+    title: prepared.task.title,
+    slug: prepared.task.slug,
+    reason: prepared.inputSummary.contractPassed ? 'created_and_brief_prepared' : 'created_and_brief_contract_failed',
+    contractPassed: prepared.inputSummary.contractPassed,
+    missingRequiredFields: prepared.inputSummary.missingRequiredFields,
+    selectedTools: prepared.inputSummary.selectedTools,
+    sourceMapCount: prepared.inputSummary.sourceMapCount,
   })
 }
 

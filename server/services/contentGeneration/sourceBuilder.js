@@ -83,6 +83,20 @@ function toNumber(value) {
   return Number(value)
 }
 
+const unique = (items = [], max = items.length) => {
+  const seen = new Set()
+  return items
+    .filter(Boolean)
+    .map(item => String(item).trim())
+    .filter((item) => {
+      const key = item.toLowerCase()
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, max)
+}
+
 function mapCategory(row, parent = null) {
   if (!row) return null
   return { id: row.id, name: row.name, handle: row.handle, parent }
@@ -775,15 +789,54 @@ function sharedUseCases(primary, secondary, explicit) {
   return (primary?.useCases || []).filter(value => secondarySet.has(String(value).toLowerCase())).slice(0, 8)
 }
 
+const CRITERION_FACT_PATTERNS = [
+  { test: /pricing|cost|billing|plan/i, fields: ['pricing', 'pricingPlans'] },
+  { test: /ease|use|workflow|usability/i, fields: ['feature', 'pros', 'useCases'] },
+  { test: /integration|integrations|ide|export/i, fields: ['feature', 'platforms', 'pros'] },
+  { test: /editing|edit|canvas|inpaint/i, fields: ['feature', 'pros', 'useCases'] },
+  { test: /image|quality|output|prompt|style|render|video|audio|voice|writing|answer|code/i, fields: ['feature', 'pros', 'whatIsSummary', 'description'] },
+  { test: /commercial|usage|license|licensing|security|controls/i, fields: ['claims', 'feature', 'website'] },
+  { test: /collaboration|team|automation|template|customization|accuracy|language|debug/i, fields: ['feature', 'pros', 'useCases'] },
+]
+
+function stringsFromField(tool, field) {
+  if (field === 'pricing') return tool.pricing || []
+  if (field === 'pricingPlans') {
+    return (tool.pricingPlans || []).flatMap(plan => [
+      plan.planName,
+      plan.billingInterval,
+      plan.isFree ? 'free plan' : '',
+      plan.hasTrial ? 'trial available' : '',
+      plan.usageLimit,
+      ...(plan.features || []),
+    ])
+  }
+  if (field === 'platforms') return (tool.platforms || []).map(item => typeof item === 'string' ? item : item.platform)
+  if (field === 'claims') return (tool.claims || []).map(claim => claim.claimText)
+  if (field === 'website') return tool.website ? ['official website available for current usage and licensing checks'] : []
+  if (field === 'whatIsSummary') return [tool.whatIsSummary]
+  if (field === 'description') return [tool.description]
+  return tool[field] || []
+}
+
+function criterionFactsForTool(tool, criterion, index) {
+  const name = String(criterion?.name || criterion || '')
+  const config = CRITERION_FACT_PATTERNS.find(row => row.test.test(name))
+  const fields = config?.fields || (
+    index % 3 === 0 ? ['feature', 'useCases'] : index % 3 === 1 ? ['pros', 'feature'] : ['whatIsSummary', 'description', 'cons']
+  )
+  const facts = unique(fields.flatMap(field => stringsFromField(tool, field)), 6)
+  if (facts.length) return facts
+  return unique([...(tool.feature || []), ...(tool.pros || []), ...(tool.useCases || []), tool.whatIsSummary, tool.description], 6)
+}
+
 function featureComparisonFacts(tools, criteria) {
-  return criteria.map(criterion => ({
+  return criteria.map((criterion, index) => ({
     dimension: criterion.name,
     tools: tools.map(tool => ({
       toolId: tool.id,
       toolName: tool.name,
-      facts: [...(tool.feature || []), ...(tool.pros || []), ...(tool.cons || [])]
-        .filter(value => String(value).toLowerCase().includes(criterion.name.toLowerCase().split(' ')[0]))
-        .slice(0, 5),
+      facts: criterionFactsForTool(tool, criterion, index),
     })),
   }))
 }

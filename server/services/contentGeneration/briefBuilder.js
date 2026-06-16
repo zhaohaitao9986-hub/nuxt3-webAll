@@ -1,6 +1,7 @@
 import { createError } from 'h3'
 import prisma from '../../utils/prisma.js'
 import { buildContentSourceData } from './sourceBuilder.js'
+import { resolveCompareCriteriaTemplate } from './compareCriteriaTemplates.js'
 import { slugify } from './slugUtils.js'
 import {
   logCompareCategorySelection,
@@ -359,11 +360,14 @@ export async function prepareDeterministicBrief(task) {
       throw createError({ statusCode: 422, statusMessage: 'prepareBriefToolsOutsideResolvedCategory' })
     }
 
-    const dimensions = criteria(category, 8)
     const sharedUseCases = unique((primary.useCases || []).filter(value => (secondary.useCases || []).map(item => item.toLowerCase()).includes(value.toLowerCase())), 6)
+    const title = comparisonTitle(primary, secondary)
+    const slug = comparisonSlug(primary, secondary)
+    const template = resolveCompareCriteriaTemplate(selection, { sharedUseCases, title, slug })
+    const dimensions = template.criteria
     return {
-      title: comparisonTitle(primary, secondary),
-      slug: comparisonSlug(primary, secondary),
+      title,
+      slug,
       primaryToolId: primary.id,
       secondaryToolId: secondary.id,
       comparisonIntent: `Help readers choose between ${primary.name} and ${secondary.name} for overlapping ${category?.name || 'AI'} workflows.`,
@@ -374,6 +378,11 @@ export async function prepareDeterministicBrief(task) {
       pricingComparisonFacts: pricingFacts([primary, secondary]),
       resolvedCategoryId,
       categorySelection: selection,
+      selectedCategory: selection.selectedCategory || null,
+      commonCategories: selection.commonCategories || [],
+      criteriaTemplateKey: template.key,
+      criteriaTemplateMatchedBy: template.matchedBy,
+      criteriaTemplateFallbackUsed: template.fallbackUsed,
     }
   }
 
