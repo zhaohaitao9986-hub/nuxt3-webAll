@@ -34,6 +34,10 @@ const statusLoading = reactive({})
 const selectedRows = ref([])
 const batchLoading = ref(false)
 const batchDeleteLoading = ref(false)
+const batchApproveLoading = ref(false)
+const batchPublishLoading = ref(false)
+const batchActionResults = ref([])
+const batchActionTitle = ref('')
 const deleteLoading = reactive({})
 const batchAbortController = ref(null)
 const categoryOptions = ref([])
@@ -59,6 +63,10 @@ const jsonDialog = reactive({
   title: '',
   content: '',
 })
+
+const batchActionBusy = computed(() => batchApproveLoading.value || batchPublishLoading.value)
+const canBatchApprove = computed(() => selectedRows.value.some(row => row.status === 'review'))
+const canBatchPublish = computed(() => selectedRows.value.some(row => row.status === 'approved'))
 
 const createVisible = ref(false)
 const createSaving = ref(false)
@@ -326,6 +334,73 @@ async function batchDeleteTasks() {
   }
   finally {
     batchDeleteLoading.value = false
+  }
+}
+
+function batchActionStatusType(status) {
+  if (status === 'success') return 'success'
+  if (status === 'skipped') return 'warning'
+  return 'danger'
+}
+
+function batchActionStatusLabel(status) {
+  return {
+    success: '成功',
+    skipped: '跳过',
+    failed: '失败',
+  }[status] || status
+}
+
+async function runBatchAction(action) {
+  const rows = [...selectedRows.value]
+  if (!rows.length || batchActionBusy.value) return
+
+  const isApprove = action === 'approve'
+  const eligible = rows.some(row => row.status === (isApprove ? 'review' : 'approved'))
+  if (!eligible) {
+    ElMessage.warning(isApprove ? '选中的任务中没有待审核任务' : '选中的任务中没有已审核通过的任务')
+    return
+  }
+
+  const actionLabel = isApprove ? '审核通过' : '发布'
+  const confirmMessage = isApprove
+    ? `确定要批量审核通过选中的 ${rows.length} 条任务吗？不符合状态的任务将被跳过。`
+    : `确定要批量发布选中的 ${rows.length} 条任务吗？发布后会生成正式页面，不符合状态的任务将被跳过。`
+
+  try {
+    await ElMessageBox.confirm(confirmMessage, `批量${actionLabel}确认`, {
+      type: 'warning',
+      confirmButtonText: actionLabel,
+      cancelButtonText: '取消',
+    })
+  }
+  catch {
+    return
+  }
+
+  const loadingRef = isApprove ? batchApproveLoading : batchPublishLoading
+  loadingRef.value = true
+  batchActionResults.value = []
+  batchActionTitle.value = `批量${actionLabel}`
+  try {
+    const endpoint = isApprove ? 'batch-approve' : 'batch-publish'
+    const res = await adminAxios.post(`/api/admin/content-generation/tasks/${endpoint}`, {
+      taskIds: rows.map(row => row.id),
+    })
+    const data = res.data || {}
+    batchActionResults.value = data.results || []
+    const summary = `批量${actionLabel}完成：成功 ${data.succeeded || 0}，失败 ${data.failed || 0}，跳过 ${data.skipped || 0}`
+    if (data.failed || data.skipped) ElMessage.warning(summary)
+    else ElMessage.success(summary)
+    selectedRows.value = []
+    await loadList()
+  }
+  catch (e) {
+    if (e?.response?.status === 401) return
+    ElMessage.error(errorMessage(e, `批量${actionLabel}失败`))
+  }
+  finally {
+    loadingRef.value = false
   }
 }
 
@@ -623,7 +698,7 @@ watch(() => createForm.contentType, (contentType) => {
         <el-button
           type="success"
           :loading="batchLoading"
-          :disabled="!selectedRows.length"
+          :disabled="!selectedRows.length || batchDeleteLoading || batchActionBusy"
           @click="batchGenerateTasksV2"
         >
           批量生成
@@ -632,10 +707,28 @@ watch(() => createForm.contentType, (contentType) => {
           停止批量
         </el-button>
         <el-button
+          type="success"
+          plain
+          :loading="batchApproveLoading"
+          :disabled="!canBatchApprove || batchLoading || batchDeleteLoading || batchPublishLoading"
+          @click="runBatchAction('approve')"
+        >
+          批量审核通过
+        </el-button>
+        <el-button
+          type="primary"
+          plain
+          :loading="batchPublishLoading"
+          :disabled="!canBatchPublish || batchLoading || batchDeleteLoading || batchApproveLoading"
+          @click="runBatchAction('publish')"
+        >
+          批量发布
+        </el-button>
+        <el-button
           type="danger"
           plain
           :loading="batchDeleteLoading"
-          :disabled="!selectedRows.length || batchLoading"
+          :disabled="!selectedRows.length || batchLoading || batchActionBusy"
           @click="batchDeleteTasks"
         >
           批量删除
@@ -797,6 +890,24 @@ watch(() => createForm.contentType, (contentType) => {
             {{ Array.isArray(row.warnings) ? row.warnings.length : 0 }}
           </template>
         </el-table-column>
+      </el-table>
+
+      <el-table
+        v-if="batchActionResults.length"
+        :data="batchActionResults"
+        border
+        size="small"
+        class="batch-result-table"
+      >
+        <el-table-column :label="`${batchActionTitle}结果`" min-width="130">
+          <template #default="{ row }">
+            <el-tag :type="batchActionStatusType(row.status)" effect="light">
+              {{ batchActionStatusLabel(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="taskId" label="taskId" width="100" />
+        <el-table-column prop="message" label="说明" min-width="320" show-overflow-tooltip />
       </el-table>
 
       <div class="content-pagination">

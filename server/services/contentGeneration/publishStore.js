@@ -259,24 +259,43 @@ async function upsertTypedChild(tx, contentPageId, content) {
   return typedWriteStatus
 }
 
-export async function upsertPublishedContentFromTask(task, content) {
+async function writePublishedContentFromTask(tx, task, content, { failIfExists = false } = {}) {
+  const data = contentPageData(task, content)
+  const existing = await tx.contentPage.findFirst({
+    where: {
+      OR: [
+        { canonicalPath: data.canonicalPath },
+        { type: data.type, slug: data.slug },
+      ],
+    },
+    select: { id: true },
+  })
+
+  if (existing && failIfExists) {
+    const error = new Error(`页面路径或 slug 已存在：${data.canonicalPath}`)
+    error.code = 'CONTENT_PAGE_EXISTS'
+    throw error
+  }
+
+  const page = existing
+    ? await tx.contentPage.update({
+        where: { id: existing.id },
+        data,
+      })
+    : await tx.contentPage.create({ data })
+
+  const typedWriteStatus = await upsertTypedChild(tx, page.id, content)
+  await replaceSources(tx, page.id, content.sources || [])
+
+  return { page, typedWriteStatus }
+}
+
+export async function upsertPublishedContentFromTask(task, content, options = {}) {
+  if (options.tx) {
+    return writePublishedContentFromTask(options.tx, task, content, options)
+  }
+
   return prisma.$transaction(async (tx) => {
-    const data = contentPageData(task, content)
-    const existing = await tx.contentPage.findUnique({
-      where: { canonicalPath: data.canonicalPath },
-      select: { id: true },
-    })
-
-    const page = existing
-      ? await tx.contentPage.update({
-          where: { id: existing.id },
-          data,
-        })
-      : await tx.contentPage.create({ data })
-
-    const typedWriteStatus = await upsertTypedChild(tx, page.id, content)
-    await replaceSources(tx, page.id, content.sources || [])
-
-    return { page, typedWriteStatus }
+    return writePublishedContentFromTask(tx, task, content, options)
   }, { maxWait: 10000, timeout: 30000 })
 }

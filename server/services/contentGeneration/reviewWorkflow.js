@@ -2,12 +2,13 @@ import { createError } from 'h3'
 import {
   approveContentGenerationTask,
   getContentGenerationTask,
-  markContentGenerationTaskPublished,
+  markContentGenerationTaskPublishedInTransaction,
   rejectContentGenerationTask,
   updateContentGenerationTask,
   updateContentGenerationTaskStatus,
 } from './taskStore'
 import { upsertPublishedContentFromTask } from './publishStore'
+import prisma from '~/server/utils/prisma'
 import { buildValidationPayload } from './generator.js'
 import { validateGeneratedContentPage } from './validators.js'
 
@@ -215,7 +216,7 @@ export async function rejectTaskForReview(taskId, reason, auth) {
   return rejectContentGenerationTask(taskId, reason, auth)
 }
 
-export async function publishApprovedTask(taskId, auth) {
+export async function publishApprovedTask(taskId, auth, { failIfExists = false } = {}) {
   const task = await getContentGenerationTask(taskId)
   if (!task) {
     throw createError({ statusCode: 404, statusMessage: '任务不存在' })
@@ -225,6 +226,15 @@ export async function publishApprovedTask(taskId, auth) {
   }
 
   const finalContent = validateBeforePublish(task)
-  const published = await upsertPublishedContentFromTask(task, finalContent)
-  return markContentGenerationTaskPublished(taskId, finalContent, auth, published.page.id, published.typedWriteStatus)
+  return prisma.$transaction(async (tx) => {
+    const published = await upsertPublishedContentFromTask(task, finalContent, { tx, failIfExists })
+    return markContentGenerationTaskPublishedInTransaction(
+      tx,
+      taskId,
+      finalContent,
+      auth,
+      published.page.id,
+      published.typedWriteStatus,
+    )
+  }, { maxWait: 10000, timeout: 30000 })
 }

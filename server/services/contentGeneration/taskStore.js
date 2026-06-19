@@ -603,17 +603,17 @@ export async function saveContentGenerationTaskGenerationResult(id, input, auth)
 }
 
 export async function approveContentGenerationTask(id, auth) {
-  const current = await prisma.contentGenerationTask.findUnique({ where: { id: Number(id) } })
-  if (!current) {
-    throw createError({ statusCode: 404, statusMessage: '任务不存在' })
-  }
-  if (current.status !== 'REVIEW') {
-    throw createError({ statusCode: 400, statusMessage: '只有待审核内容可以审核通过' })
-  }
-
   const updated = await prisma.$transaction(async (tx) => {
-    const row = await tx.contentGenerationTask.update({
-      where: { id: Number(id) },
+    const current = await tx.contentGenerationTask.findUnique({ where: { id: Number(id) } })
+    if (!current) {
+      throw createError({ statusCode: 404, statusMessage: '任务不存在' })
+    }
+    if (current.status !== 'REVIEW') {
+      throw createError({ statusCode: 400, statusMessage: '只有待审核内容可以审核通过' })
+    }
+
+    const changed = await tx.contentGenerationTask.updateMany({
+      where: { id: Number(id), status: 'REVIEW' },
       data: {
         status: 'APPROVED',
         approvedByAdminId: actorId(auth),
@@ -621,6 +621,10 @@ export async function approveContentGenerationTask(id, auth) {
         updatedAt: new Date(),
       },
     })
+    if (changed.count !== 1) {
+      throw createError({ statusCode: 409, statusMessage: '任务状态已变化，请刷新后重试' })
+    }
+    const row = await tx.contentGenerationTask.findUnique({ where: { id: Number(id) } })
     await createTaskEvent(tx, row.id, {
       auth,
       eventType: 'approved',
@@ -668,40 +672,53 @@ export async function rejectContentGenerationTask(id, reason, auth) {
   return serializeTask(updated)
 }
 
-export async function markContentGenerationTaskPublished(id, publishedContent, auth, contentPageId = null, typedWriteStatus = null) {
-  const current = await prisma.contentGenerationTask.findUnique({ where: { id: Number(id) } })
+export async function markContentGenerationTaskPublishedInTransaction(tx, id, publishedContent, auth, contentPageId = null, typedWriteStatus = null) {
+  const current = await tx.contentGenerationTask.findUnique({ where: { id: Number(id) } })
   if (!current) {
     throw createError({ statusCode: 404, statusMessage: '任务不存在' })
   }
+  if (current.status !== 'APPROVED') {
+    throw createError({ statusCode: 400, statusMessage: '只有审核通过的内容可以发布' })
+  }
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const row = await tx.contentGenerationTask.update({
-      where: { id: Number(id) },
-      data: {
-        status: 'PUBLISHED',
-        finalContentJson: normalizeJson(publishedContent),
-        validationJson: normalizeJson({
-          ...(current.validationJson && typeof current.validationJson === 'object' ? current.validationJson : {}),
-          typedWriteStatus,
-        }),
-        contentPageId: contentPageId || current.contentPageId,
-        publishedByAdminId: actorId(auth),
-        publishedAt: new Date(),
-        updatedAt: new Date(),
-      },
-    })
-    await createTaskEvent(tx, row.id, {
+  const row = await tx.contentGenerationTask.update({
+    where: { id: Number(id) },
+    data: {
+      status: 'PUBLISHED',
+      finalContentJson: normalizeJson(publishedContent),
+      validationJson: normalizeJson({
+        ...(current.validationJson && typeof current.validationJson === 'object' ? current.validationJson : {}),
+        typedWriteStatus,
+      }),
+      contentPageId: contentPageId || current.contentPageId,
+      publishedByAdminId: actorId(auth),
+      publishedAt: new Date(),
+      updatedAt: new Date(),
+    },
+  })
+  await createTaskEvent(tx, row.id, {
+    auth,
+    eventType: 'published',
+    fromStatus: DB_TO_STATUS[current.status],
+    toStatus: 'published',
+    message: 'Task published',
+    payload: { contentPageId: row.contentPageId, typedWriteStatus },
+  })
+
+  return serializeTask(row)
+}
+
+export async function markContentGenerationTaskPublished(id, publishedContent, auth, contentPageId = null, typedWriteStatus = null) {
+  return prisma.$transaction(async (tx) => {
+    return markContentGenerationTaskPublishedInTransaction(
+      tx,
+      id,
+      publishedContent,
       auth,
-      eventType: 'published',
-      fromStatus: DB_TO_STATUS[current.status],
-      toStatus: 'published',
-      message: 'Task published',
-      payload: { contentPageId: row.contentPageId, typedWriteStatus },
-    })
-    return row
+      contentPageId,
+      typedWriteStatus,
+    )
   }, { maxWait: 10000, timeout: 30000 })
-
-  return serializeTask(updated)
 }
 
 const MAX_BATCH_DELETE = 50
